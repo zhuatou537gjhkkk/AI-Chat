@@ -1,0 +1,7 @@
+POST http://localhost:3000/test-db
+Content-Type: application/json
+
+{
+  "role": "user",
+  "content": "hello"
+}

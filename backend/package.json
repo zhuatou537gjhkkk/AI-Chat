@@ -1,0 +1,23 @@
+{
+    "name": "backend",
+    "private": true,
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "nodemon src/app.js",
+        "start": "node src/app.js"
+    },
+    "dependencies": {
+        "express": "^4.21.1",
+        "cors": "^2.8.5",
+        "dotenv": "^16.4.5",
+        "better-sqlite3": "^11.7.0",
+        "langchain": "^0.3.5",
+        "@langchain/core": "^0.3.15",
+        "faiss-node": "^0.5.1",
+        "multer": "^1.4.5-lts.1"
+    },
+    "devDependencies": {
+        "nodemon": "^3.1.7"
+    }
+}
