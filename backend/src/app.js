@@ -1,6 +1,8 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { initDB, saveMessage, getHistoryMessages } from "./db/index.js";
+import { chatWithStream } from "./services/chat.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -35,6 +37,24 @@ app.post("/test-db", (req, res) => {
         ok: true,
         history
     });
+});
+
+app.post("/chat", async (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    const { message } = req.body || {};
+
+    if (!message) {
+        res.write(
+            `data: ${JSON.stringify({ error: "message is required" })}\n\n`
+        );
+        res.end();
+        return;
+    }
+
+    await chatWithStream(message, res);
 });
 
 app.listen(PORT, () => {

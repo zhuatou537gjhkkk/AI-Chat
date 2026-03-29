@@ -5,3 +5,10 @@ Content-Type: application/json
   "role": "user",
   "content": "hello"
 }
+###
+POST http://localhost:3000/chat
+Content-Type: application/json
+
+{
+  "message": "请讲一个程序员的冷笑话"
+}
