@@ -11,6 +11,7 @@ db.pragma("journal_mode = WAL");
 
 let insertMessageStmt = null;
 let selectHistoryStmt = null;
+let selectMessageStatsStmt = null;
 
 export function initDB() {
     db.prepare(
@@ -35,6 +36,18 @@ export function initDB() {
             "SELECT id, role, content, created_at FROM messages ORDER BY id DESC LIMIT ?"
         );
     }
+
+    if (!selectMessageStatsStmt) {
+        selectMessageStatsStmt = db.prepare(
+            `
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS user_count,
+                SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END) AS assistant_count
+            FROM messages
+            `
+        );
+    }
 }
 
 export function saveMessage(role, content) {
@@ -52,6 +65,20 @@ export function getHistoryMessages(limit = 20) {
 
     const rows = selectHistoryStmt.all(limit);
     return rows.reverse();
+}
+
+export function getMessageStats() {
+    if (!selectMessageStatsStmt) {
+        initDB();
+    }
+
+    const row = selectMessageStatsStmt.get();
+    return {
+        total: row?.total ?? 0,
+        user_count: row?.user_count ?? 0,
+        assistant_count: row?.assistant_count ?? 0,
+        at: new Date().toISOString()
+    };
 }
 
 export default db;
