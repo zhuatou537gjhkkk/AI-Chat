@@ -63,3 +63,28 @@ export async function fetchChatStream(message, onChunk, onDone, onError) {
         onError(error);
     }
 }
+
+export async function uploadFile(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch('http://localhost:3000/upload', {
+        method: 'POST',
+        body: formData,
+    });
+
+    if (!response.ok) {
+        let message = 'Upload failed';
+
+        try {
+            const data = await response.json();
+            message = data?.message || message;
+        } catch (error) {
+            // Ignore JSON parsing errors and throw default message.
+        }
+
+        throw new Error(message);
+    }
+
+    return response.json();
+}

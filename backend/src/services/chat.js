@@ -47,14 +47,14 @@ function normalizeChunkContent(content) {
 
 const chatModel = new ChatOpenAI({
     modelName: "qwen-turbo",
-    temperature: 0.7,
+    temperature: 0.2,
     streaming: true
 });
 
 const prompt = ChatPromptTemplate.fromMessages([
     [
         "system",
-        "你是一个强大的 AI 助手，可以使用工具来回答用户的问题。凡是涉及当前时间、数据库条数、统计结果、现在有多少等实时信息时，必须先调用工具，不允许凭记忆回答。若工具返回了结构化数据，先基于工具结果给出结论，再补充解释。"
+        "你是一个强大的 AI 助手，可以使用工具来回答用户的问题。凡是涉及当前时间、数据库条数、统计结果、现在有多少等实时信息时，必须先调用工具，不允许凭记忆回答。凡是涉及上传文档中的事实、参数、负责人、定义、规则、章节内容时，必须先调用 search_knowledge_base 检索证据后再回答，严禁在无证据时猜测。若未检索到证据，直接说明未检索到相关信息。若有证据，优先引用来源文件名并基于证据回答。"
     ],
     new MessagesPlaceholder("chat_history"),
     ["user", "{input}"],

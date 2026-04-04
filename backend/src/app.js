@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import { initDB, saveMessage, getHistoryMessages, getMessageStats } from "./db/index.js";
 import { chatWithStream } from "./services/chat.js";
+import { uploadMiddleware, processAndStoreDocument, retrieveKnowledgeEvidence } from "./rag/index.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,8 +18,55 @@ function isDbCountIntent(input) {
     return /数据库|sqlite|历史消息|对话记录/.test(text) && /多少|几条|总数|条数|统计|count/.test(text);
 }
 
+function isKnowledgeIntent(input) {
+    const text = String(input || "");
+    const hasDocCue = /文档|资料|文件|手册|说明书|知识库|上传|上文|文中|这份|该文|来源|证据|摘录/.test(text);
+    const hasFileRef = /\b[\w.-]+\.(txt|md|pdf|doc|docx)\b/i.test(text);
+    return hasDocCue || hasFileRef;
+}
+
 function sendSseText(res, text) {
     res.write(`data: ${JSON.stringify({ text })}\n\n`);
+}
+
+function sanitizeSnippet(text) {
+    return String(text || "")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function buildEvidenceSummary(items) {
+    const snippets = items
+        .map((item) => sanitizeSnippet(item.content))
+        .filter(Boolean);
+
+    if (snippets.length === 0) {
+        return "根据当前检索结果，暂时无法提炼出明确结论。";
+    }
+
+    const merged = snippets.join("；");
+    const sentencePieces = merged
+        .split(/[。！？!?；;]+/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+
+    const keyPoints = sentencePieces.slice(0, 2);
+
+    if (keyPoints.length === 0) {
+        return `根据检索到的文档内容，核心信息是：${merged.slice(0, 120)}${merged.length > 120 ? "..." : ""}`;
+    }
+
+    return `根据检索到的文档内容，结论如下：${keyPoints.join("；")}。`;
+}
+
+function formatEvidenceAnswer(items) {
+    const summary = buildEvidenceSummary(items);
+    const lines = items.map((item, index) => {
+        const score = Number(item.score).toFixed(4);
+        return `${index + 1}. 来源：${item.source}（score=${score}）\n摘录：${item.content}`;
+    });
+
+    return `${summary}\n\n证据引用：\n${lines.join("\n\n")}`;
 }
 
 app.get("/ping", (req, res) => {
@@ -48,6 +96,33 @@ app.post("/test-db", (req, res) => {
     });
 });
 
+app.post("/upload", uploadMiddleware, async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({
+                ok: false,
+                message: "file is required"
+            });
+        }
+
+        const result = await processAndStoreDocument(
+            req.file.buffer,
+            req.file.originalname
+        );
+
+        return res.json({
+            ok: true,
+            message: "document indexed",
+            data: result
+        });
+    } catch (error) {
+        return res.status(500).json({
+            ok: false,
+            message: error.message || "upload failed"
+        });
+    }
+});
+
 app.post("/chat", async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -69,6 +144,30 @@ app.post("/chat", async (req, res) => {
         const answer = `截至目前，数据库消息共 ${stats.total} 条（user: ${stats.user_count}，assistant: ${stats.assistant_count}）。`;
         saveMessage("assistant", answer);
 
+        sendSseText(res, answer);
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+    }
+
+    if (isKnowledgeIntent(message)) {
+        const evidence = await retrieveKnowledgeEvidence(message);
+        saveMessage("user", message);
+
+        if (evidence.status === "ok") {
+            const answer = formatEvidenceAnswer(evidence.items);
+            saveMessage("assistant", answer);
+            sendSseText(res, answer);
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+        }
+
+        const answer = evidence.status === "empty"
+            ? "当前知识库为空，请先上传 txt 或 md 文档。"
+            : "知识库中未检索到足够相关证据，建议换个问法，或在问题里带上文档名/关键词（如 A.txt、B.md）。";
+
+        saveMessage("assistant", answer);
         sendSseText(res, answer);
         res.write("data: [DONE]\n\n");
         res.end();
