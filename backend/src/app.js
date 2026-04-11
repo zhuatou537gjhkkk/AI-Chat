@@ -1,7 +1,16 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { initDB, saveMessage, getHistoryMessages, getMessageStats } from "./db/index.js";
+import {
+    initDB,
+    saveMessage,
+    getHistoryMessages,
+    getMessageStats,
+    createSession,
+    getSessions,
+    renameSession,
+    removeSession
+} from "./db/index.js";
 import { chatWithStream } from "./services/chat.js";
 import { uploadMiddleware, processAndStoreDocument, retrieveKnowledgeEvidence } from "./rag/index.js";
 
@@ -77,18 +86,109 @@ app.get("/ping", (req, res) => {
     });
 });
 
-app.post("/test-db", (req, res) => {
-    const { role, content } = req.body || {};
+app.get("/sessions", (req, res) => {
+    const sessions = getSessions();
 
-    if (!role || !content) {
+    return res.json({
+        ok: true,
+        sessions
+    });
+});
+
+app.post("/sessions", (req, res) => {
+    const { title } = req.body || {};
+    const id = createSession(title || "新对话");
+
+    return res.json({
+        ok: true,
+        id
+    });
+});
+
+app.patch("/sessions/:id", (req, res) => {
+    const sessionId = Number(req.params.id);
+    const { title } = req.body || {};
+
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
         return res.status(400).json({
             ok: false,
-            message: "role and content are required"
+            message: "invalid session id"
         });
     }
 
-    saveMessage(role, content);
-    const history = getHistoryMessages(20);
+    if (!String(title || "").trim()) {
+        return res.status(400).json({
+            ok: false,
+            message: "title is required"
+        });
+    }
+
+    const result = renameSession(sessionId, title);
+    if (!result?.changes) {
+        return res.status(404).json({
+            ok: false,
+            message: "session not found"
+        });
+    }
+
+    return res.json({
+        ok: true
+    });
+});
+
+app.delete("/sessions/:id", (req, res) => {
+    const sessionId = Number(req.params.id);
+
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+        return res.status(400).json({
+            ok: false,
+            message: "invalid session id"
+        });
+    }
+
+    const result = removeSession(sessionId);
+    if (!result?.changes) {
+        return res.status(404).json({
+            ok: false,
+            message: "session not found"
+        });
+    }
+
+    return res.json({
+        ok: true
+    });
+});
+
+app.get("/sessions/:id/messages", (req, res) => {
+    const sessionId = Number(req.params.id);
+
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+        return res.status(400).json({
+            ok: false,
+            message: "invalid session id"
+        });
+    }
+
+    const history = getHistoryMessages(sessionId, 100);
+    return res.json({
+        ok: true,
+        messages: history
+    });
+});
+
+app.post("/test-db", (req, res) => {
+    const { session_id, role, content } = req.body || {};
+    const sessionId = Number(session_id);
+
+    if (!Number.isInteger(sessionId) || sessionId <= 0 || !role || !content) {
+        return res.status(400).json({
+            ok: false,
+            message: "session_id, role and content are required"
+        });
+    }
+
+    saveMessage(sessionId, role, content);
+    const history = getHistoryMessages(sessionId, 20);
 
     return res.json({
         ok: true,
@@ -128,21 +228,22 @@ app.post("/chat", async (req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    const { message } = req.body || {};
+    const { session_id, message } = req.body || {};
+    const sessionId = Number(session_id);
 
-    if (!message) {
+    if (!Number.isInteger(sessionId) || sessionId <= 0 || !message) {
         res.write(
-            `data: ${JSON.stringify({ error: "message is required" })}\n\n`
+            `data: ${JSON.stringify({ error: "session_id and message are required" })}\n\n`
         );
         res.end();
         return;
     }
 
     if (isDbCountIntent(message)) {
-        saveMessage("user", message);
+        saveMessage(sessionId, "user", message);
         const stats = getMessageStats();
         const answer = `截至目前，数据库消息共 ${stats.total} 条（user: ${stats.user_count}，assistant: ${stats.assistant_count}）。`;
-        saveMessage("assistant", answer);
+        saveMessage(sessionId, "assistant", answer);
 
         sendSseText(res, answer);
         res.write("data: [DONE]\n\n");
@@ -152,11 +253,11 @@ app.post("/chat", async (req, res) => {
 
     if (isKnowledgeIntent(message)) {
         const evidence = await retrieveKnowledgeEvidence(message);
-        saveMessage("user", message);
+        saveMessage(sessionId, "user", message);
 
         if (evidence.status === "ok") {
             const answer = formatEvidenceAnswer(evidence.items);
-            saveMessage("assistant", answer);
+            saveMessage(sessionId, "assistant", answer);
             sendSseText(res, answer);
             res.write("data: [DONE]\n\n");
             res.end();
@@ -167,14 +268,14 @@ app.post("/chat", async (req, res) => {
             ? "当前知识库为空，请先上传 txt 或 md 文档。"
             : "知识库中未检索到足够相关证据，建议换个问法，或在问题里带上文档名/关键词（如 A.txt、B.md）。";
 
-        saveMessage("assistant", answer);
+        saveMessage(sessionId, "assistant", answer);
         sendSseText(res, answer);
         res.write("data: [DONE]\n\n");
         res.end();
         return;
     }
 
-    await chatWithStream(message, res);
+    await chatWithStream(sessionId, message, res);
 });
 
 app.listen(PORT, () => {

@@ -1,11 +1,86 @@
-export async function fetchChatStream(message, onChunk, onDone, onError) {
+const BASE_URL = 'http://localhost:3000';
+
+export async function fetchSessions() {
+    const response = await fetch(`${BASE_URL}/sessions`);
+
+    if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data?.sessions || [];
+}
+
+export async function createSession(title) {
+    const response = await fetch(`${BASE_URL}/sessions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ title }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data?.id;
+}
+
+export async function updateSessionTitle(id, title) {
+    const response = await fetch(`${BASE_URL}/sessions/${id}`, {
+        method: 'PATCH',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ title }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    return response.json();
+}
+
+export async function deleteSession(id) {
+    const response = await fetch(`${BASE_URL}/sessions/${id}`, {
+        method: 'DELETE',
+    });
+
+    if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    return response.json();
+}
+
+export async function fetchMessagesBySession(id) {
+    const response = await fetch(`${BASE_URL}/sessions/${id}/messages`);
+
+    if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data?.messages || [];
+}
+
+export async function fetchChatStream(sessionId, message, onChunk, onDone, onError, options = {}) {
+    const { signal } = options;
+
     try {
-        const response = await fetch('http://localhost:3000/chat', {
+        const response = await fetch(`${BASE_URL}/chat`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ message }),
+            signal,
+            body: JSON.stringify({
+                session_id: sessionId,
+                message,
+            }),
         });
 
         if (!response.ok) {
@@ -68,7 +143,7 @@ export async function uploadFile(file) {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch('http://localhost:3000/upload', {
+    const response = await fetch(`${BASE_URL}/upload`, {
         method: 'POST',
         body: formData,
     });

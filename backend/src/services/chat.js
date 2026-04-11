@@ -82,10 +82,10 @@ async function getAgentExecutor() {
     return agentExecutorPromise;
 }
 
-export async function chatWithStream(userMessage, res) {
-    saveMessage("user", userMessage);
+export async function chatWithStream(session_id, userMessage, res) {
+    saveMessage(session_id, "user", userMessage);
 
-    const history = getHistoryMessages(10);
+    const history = getHistoryMessages(session_id, 10);
     const formattedHistory = history.map(toLangChainMessage);
 
     // We pass the latest user message as input, so remove duplicated tail user message from chat_history.
@@ -142,7 +142,7 @@ export async function chatWithStream(userMessage, res) {
             res.write(`data: ${JSON.stringify({ text })}\n\n`);
         }
 
-        saveMessage("assistant", fullText);
+        saveMessage(session_id, "assistant", fullText);
         res.write("data: [DONE]\n\n");
         res.end();
     } catch (error) {

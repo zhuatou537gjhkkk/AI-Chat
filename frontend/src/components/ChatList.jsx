@@ -49,6 +49,8 @@ function Row({ index, style, data }) {
 
 export default function ChatList() {
     const messages = useChatStore((state) => state.messages);
+    const isSessionLoading = useChatStore((state) => state.isSessionLoading);
+    const currentSessionId = useChatStore((state) => state.currentSessionId);
     const listRef = useRef(null);
     const containerRef = useRef(null);
     const outerRef = useRef(null);
@@ -57,6 +59,17 @@ export default function ChatList() {
     const isNearBottomRef = useRef(true);
     const [listHeight, setListHeight] = useState(0);
     const [showBackToBottom, setShowBackToBottom] = useState(false);
+
+    const scrollOuterToBottom = (behavior = 'smooth') => {
+        if (!outerRef.current) {
+            return;
+        }
+
+        outerRef.current.scrollTo({
+            top: outerRef.current.scrollHeight,
+            behavior,
+        });
+    };
 
     const updateNearBottom = () => {
         const outer = outerRef.current;
@@ -75,10 +88,7 @@ export default function ChatList() {
             return;
         }
 
-        outerRef.current.scrollTo({
-            top: outerRef.current.scrollHeight,
-            behavior: 'smooth',
-        });
+        scrollOuterToBottom('smooth');
         isNearBottomRef.current = true;
         setShowBackToBottom(false);
     };
@@ -117,12 +127,14 @@ export default function ChatList() {
         }
 
         if (isNearBottomRef.current && outerRef.current) {
-            outerRef.current.scrollTo({
-                top: outerRef.current.scrollHeight,
-                behavior: 'smooth',
-            });
+            scrollOuterToBottom('smooth');
         }
     }, [messages]);
+
+    useEffect(() => {
+        sizeMapRef.current = {};
+        hasInitializedScrollRef.current = false;
+    }, [currentSessionId]);
 
     const setSize = (index, size) => {
         const prev = sizeMapRef.current[index];
@@ -134,6 +146,12 @@ export default function ChatList() {
         sizeMapRef.current[index] = size;
         if (listRef.current) {
             listRef.current.resetAfterIndex(index);
+
+            if (isNearBottomRef.current) {
+                requestAnimationFrame(() => {
+                    scrollOuterToBottom('smooth');
+                });
+            }
         }
     };
 
@@ -156,6 +174,17 @@ export default function ChatList() {
 
     return (
         <div ref={containerRef} className="relative h-full w-full overflow-hidden">
+            {isSessionLoading && (
+                <div className="absolute inset-0 z-10 space-y-3 bg-slate-50/90 px-6 py-5 backdrop-blur-[1px]">
+                    {[1, 2, 3, 4].map((item) => (
+                        <div
+                            key={item}
+                            className="h-12 w-full animate-pulse rounded-2xl bg-slate-200"
+                        />
+                    ))}
+                </div>
+            )}
+
             {listHeight > 0 && (
                 <List
                     ref={listRef}

@@ -9,6 +9,9 @@ export default function ChatInput() {
     const fileInputRef = useRef(null);
     const sendMessage = useChatStore((state) => state.sendMessage);
     const isTyping = useChatStore((state) => state.isTyping);
+    const stopMessageStream = useChatStore((state) => state.stopMessageStream);
+    const retryLastFailedMessage = useChatStore((state) => state.retryLastFailedMessage);
+    const lastFailedUserMessage = useChatStore((state) => state.lastFailedUserMessage);
 
     useEffect(() => {
         const element = textareaRef.current;
@@ -76,8 +79,8 @@ export default function ChatInput() {
     };
 
     return (
-        <div className="fixed bottom-0 left-0 right-0 border-t border-gray-200 bg-white/95 px-4 pb-4 pt-3 shadow-[0_-8px_20px_rgba(15,23,42,0.08)] backdrop-blur">
-            <div className="mx-auto max-w-4xl">
+        <div className="border-t border-gray-200 bg-white/95 px-4 pb-4 pt-3 shadow-[0_-8px_20px_rgba(15,23,42,0.08)] backdrop-blur">
+            <div>
                 {isTyping && (
                     <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs text-blue-700">
                         <span>AI 正在思考</span>
@@ -86,6 +89,19 @@ export default function ChatInput() {
                             <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500 [animation-delay:120ms]" />
                             <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500 [animation-delay:240ms]" />
                         </span>
+                    </div>
+                )}
+
+                {!isTyping && lastFailedUserMessage && (
+                    <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-700">
+                        <span>上次发送失败</span>
+                        <button
+                            type="button"
+                            onClick={retryLastFailedMessage}
+                            className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 hover:bg-amber-200"
+                        >
+                            立即重试
+                        </button>
                     </div>
                 )}
 
@@ -128,6 +144,16 @@ export default function ChatInput() {
                     >
                         {isTyping ? '思考中...' : '发送'}
                     </button>
+
+                    {isTyping && (
+                        <button
+                            type="button"
+                            onClick={stopMessageStream}
+                            className="h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                        >
+                            停止
+                        </button>
+                    )}
                 </div>
             </div>
         </div>
