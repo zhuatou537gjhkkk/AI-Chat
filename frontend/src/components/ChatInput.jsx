@@ -4,6 +4,7 @@ import { uploadFile } from '../api/chat';
 
 export default function ChatInput() {
     const [value, setValue] = useState('');
+    const [searchMode, setSearchMode] = useState('balanced');
     const [uploadStatus, setUploadStatus] = useState('');
     const textareaRef = useRef(null);
     const fileInputRef = useRef(null);
@@ -45,8 +46,16 @@ export default function ChatInput() {
             return;
         }
 
+        const modeHintMap = {
+            strict_time: '要求：严格遵守用户时间窗口；若无命中，明确说明，不返回超窗结果。',
+            balanced: '',
+            deep_search: '要求：可进行更全面联网检索，优先权威来源，并标注待核验或超窗信息。',
+        };
+        const hint = modeHintMap[searchMode] || '';
+        const finalText = hint ? `${text}\n${hint}` : text;
+
         setValue('');
-        await sendMessage(text);
+        await sendMessage(finalText);
     };
 
     const handleKeyDown = async (event) => {
@@ -136,6 +145,18 @@ export default function ChatInput() {
                         onChange={(event) => setValue(event.target.value)}
                         onKeyDown={handleKeyDown}
                     />
+                    <div className="hidden md:flex items-center">
+                        <select
+                            value={searchMode}
+                            onChange={(event) => setSearchMode(event.target.value)}
+                            className="h-11 rounded-xl border border-gray-300 bg-white px-2 text-xs text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            title="联网搜索模式"
+                        >
+                            <option value="strict_time">严格时间</option>
+                            <option value="balanced">均衡模式</option>
+                            <option value="deep_search">深度搜索</option>
+                        </select>
+                    </div>
                     <button
                         type="button"
                         disabled={isTyping}

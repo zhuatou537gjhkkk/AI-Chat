@@ -2,6 +2,52 @@ import { memo, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+function parseStructuredWebSearchContent(content) {
+    const text = String(content || '').trim();
+    if (!text.includes('标题:') || !text.includes('链接:')) {
+        return null;
+    }
+
+    const lines = text.split('\n');
+    const headerLine = lines[0].startsWith('已按时间窗口') || lines[0].startsWith('未找到')
+        ? lines[0]
+        : '';
+    const dataText = headerLine ? lines.slice(1).join('\n').trim() : text;
+
+    const blocks = dataText
+        .split(/\n(?=时间: )/g)
+        .map((block) => block.trim())
+        .filter(Boolean);
+
+    const items = blocks.map((block) => {
+        const pick = (label) => {
+            const line = block
+                .split('\n')
+                .find((itemLine) => itemLine.startsWith(`${label}: `));
+            return line ? line.slice(label.length + 2).trim() : '';
+        };
+
+        return {
+            time: pick('时间'),
+            verification: pick('时间校验'),
+            site: pick('来源'),
+            title: pick('标题'),
+            summary: pick('摘要'),
+            link: pick('链接'),
+            query: pick('检索词'),
+        };
+    }).filter((item) => item.title || item.link);
+
+    if (items.length === 0) {
+        return null;
+    }
+
+    return {
+        header: headerLine,
+        items,
+    };
+}
+
 let syntaxHighlighterCache = null;
 let syntaxThemeCache = null;
 let syntaxLoaderPromise = null;
@@ -140,6 +186,69 @@ function CodeRenderer({ inline, className, children, ...props }) {
 function MessageItem({ message }) {
     const isUser = message.role === 'user';
     const isAssistantThinking = message.role === 'assistant' && message.content === '';
+    const structuredSearchResult =
+        message.role === 'assistant' ? parseStructuredWebSearchContent(message.content) : null;
+
+    const renderStructuredSearchCards = () => {
+        if (!structuredSearchResult) {
+            return null;
+        }
+
+        return (
+            <div className="space-y-3">
+                {structuredSearchResult.header && (
+                    <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                        {structuredSearchResult.header}
+                    </div>
+                )}
+
+                {structuredSearchResult.items.map((item, index) => {
+                    const isVerified = item.verification === '已核验';
+                    return (
+                        <article
+                            key={`${item.link || item.title}-${index}`}
+                            className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+                        >
+                            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                                <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">{item.time || '未知时间'}</span>
+                                <span
+                                    className={[
+                                        'rounded px-2 py-0.5',
+                                        isVerified
+                                            ? 'bg-emerald-100 text-emerald-700'
+                                            : 'bg-amber-100 text-amber-700',
+                                    ].join(' ')}
+                                >
+                                    {item.verification || '待核验'}
+                                </span>
+                                <span className="rounded bg-violet-100 px-2 py-0.5 text-violet-700">{item.site || '未知来源'}</span>
+                            </div>
+
+                            <h4 className="mb-1 text-sm font-semibold text-slate-900">{item.title || '无标题'}</h4>
+                            <p className="mb-2 whitespace-pre-wrap text-xs text-slate-700">{item.summary || '无摘要'}</p>
+
+                            {item.link && item.link !== '无链接' ? (
+                                <a
+                                    href={item.link}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
+                                >
+                                    打开来源链接
+                                </a>
+                            ) : (
+                                <span className="text-xs text-slate-500">无可用链接</span>
+                            )}
+
+                            {item.query && (
+                                <p className="mt-2 text-[11px] text-slate-500">检索词: {item.query}</p>
+                            )}
+                        </article>
+                    );
+                })}
+            </div>
+        );
+    };
 
     const renderAssistantContent = () => {
         if (isAssistantThinking) {
@@ -149,6 +258,10 @@ function MessageItem({ message }) {
                     <span className="animate-pulse">🧠 Agent 正在思考与检索...</span>
                 </div>
             );
+        }
+
+        if (structuredSearchResult) {
+            return renderStructuredSearchCards();
         }
 
         return (
