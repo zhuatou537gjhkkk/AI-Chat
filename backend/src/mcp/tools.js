@@ -24,7 +24,7 @@ const getDbMessageCountTool = new DynamicTool({
 
 const searchKnowledgeBaseTool = new DynamicTool({
     name: "search_knowledge_base",
-    description: "当用户询问上传文档中的事实、参数、负责人、定义、规则等内容时，必须先调用此工具检索，再基于检索结果回答；若无结果，明确说明未检索到证据",
+    description: "仅用于上传文档的事实问答（参数、负责人、定义、规则、引用证据）。若用户是创意写作任务（如标语、文案、命名、润色、头脑风暴），禁止调用此工具。若返回“当前知识库为空”或“未检索到相关知识片段”，必须停止继续调用。",
     func: async (input) => {
         return queryKnowledgeBase(input);
     }

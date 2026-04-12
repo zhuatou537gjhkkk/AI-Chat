@@ -68,7 +68,12 @@ export async function fetchMessagesBySession(id) {
 }
 
 export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, onDone, onError, options = {}) {
-    const { signal, enableWebSearch = true } = options;
+    const {
+        signal,
+        enableWebSearch = true,
+        systemPrompt = '你是一个有用的 AI 助手。',
+        temperature = 0.7,
+    } = options;
 
     try {
         const response = await fetch(`${BASE_URL}/chat`, {
@@ -81,6 +86,8 @@ export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, 
                 session_id: sessionId,
                 message,
                 enable_web_search: enableWebSearch,
+                systemPrompt,
+                temperature,
             }),
         });
 

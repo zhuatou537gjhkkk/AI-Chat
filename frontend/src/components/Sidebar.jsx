@@ -13,6 +13,7 @@ export default function Sidebar({ className = '', onAfterSelect }) {
     const addNewSession = useChatStore((state) => state.addNewSession);
     const renameSession = useChatStore((state) => state.renameSession);
     const deleteSession = useChatStore((state) => state.deleteSession);
+    const toggleSettings = useChatStore((state) => state.toggleSettings);
 
     const filteredSessions = useMemo(() => {
         const q = keyword.trim().toLowerCase();
@@ -144,6 +145,16 @@ export default function Sidebar({ className = '', onAfterSelect }) {
                         </li>
                     )}
                 </ul>
+            </div>
+
+            <div className="border-t border-gray-800 p-3">
+                <button
+                    type="button"
+                    onClick={toggleSettings}
+                    className="w-full rounded-lg bg-gray-800 px-3 py-2 text-sm font-medium text-gray-100 transition hover:bg-gray-700"
+                >
+                    ⚙️ 设置
+                </button>
             </div>
         </aside>
     );

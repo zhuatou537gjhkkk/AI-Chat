@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import {
     fetchChatStream,
     fetchSessions,
@@ -15,6 +16,24 @@ const initialMessage = {
 };
 
 const DEFAULT_SESSION_TITLE = '新对话';
+const DEFAULT_SYSTEM_PROMPT = '你是一个有用的 AI 助手。';
+const DEFAULT_TEMPERATURE = 0.7;
+
+function normalizeTemperatureValue(temp) {
+    const value = Number(temp);
+    if (!Number.isFinite(value)) {
+        return DEFAULT_TEMPERATURE;
+    }
+
+    return Math.max(0, Math.min(1, value));
+}
+
+function createDefaultAgentSettings() {
+    return {
+        systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        temperature: DEFAULT_TEMPERATURE,
+    };
+}
 
 function toSessionPreviewTitle(content) {
     const normalized = String(content || '').replace(/\s+/g, ' ').trim();
@@ -37,7 +56,7 @@ function sortSessionsByUpdatedAt(sessions) {
     });
 }
 
-export const useChatStore = create((set, get) => ({
+export const useChatStore = create(persist((set, get) => ({
     sessions: [],
     currentSessionId: null,
     hasInitializedSessions: false,
@@ -51,6 +70,81 @@ export const useChatStore = create((set, get) => ({
     lastFailedRequest: null,
     messages: [initialMessage],
     isTyping: false,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    temperature: DEFAULT_TEMPERATURE,
+    sessionAgentSettings: {},
+    isSettingsOpen: false,
+    setSystemPrompt: (prompt) => {
+        const nextPrompt = String(prompt ?? '');
+
+        set((state) => {
+            const sessionId = state.currentSessionId;
+            if (!sessionId) {
+                return { systemPrompt: nextPrompt };
+            }
+
+            const sessionSettings = state.sessionAgentSettings[sessionId] || createDefaultAgentSettings();
+
+            return {
+                systemPrompt: nextPrompt,
+                sessionAgentSettings: {
+                    ...state.sessionAgentSettings,
+                    [sessionId]: {
+                        ...sessionSettings,
+                        systemPrompt: nextPrompt,
+                    },
+                },
+            };
+        });
+    },
+    setTemperature: (temp) => {
+        const normalized = normalizeTemperatureValue(temp);
+
+        set((state) => {
+            const sessionId = state.currentSessionId;
+            if (!sessionId) {
+                return { temperature: normalized };
+            }
+
+            const sessionSettings = state.sessionAgentSettings[sessionId] || createDefaultAgentSettings();
+
+            return {
+                temperature: normalized,
+                sessionAgentSettings: {
+                    ...state.sessionAgentSettings,
+                    [sessionId]: {
+                        ...sessionSettings,
+                        temperature: normalized,
+                    },
+                },
+            };
+        });
+    },
+    resetCurrentSessionSettings: () => {
+        set((state) => {
+            const nextDefault = createDefaultAgentSettings();
+            const sessionId = state.currentSessionId;
+
+            if (!sessionId) {
+                return {
+                    systemPrompt: nextDefault.systemPrompt,
+                    temperature: nextDefault.temperature,
+                };
+            }
+
+            return {
+                systemPrompt: nextDefault.systemPrompt,
+                temperature: nextDefault.temperature,
+                sessionAgentSettings: {
+                    ...state.sessionAgentSettings,
+                    [sessionId]: nextDefault,
+                },
+            };
+        });
+    },
+    toggleSettings: () => {
+        set((state) => ({ isSettingsOpen: !state.isSettingsOpen }));
+    },
     initSessions: async () => {
         const state = get();
 
@@ -79,11 +173,19 @@ export const useChatStore = create((set, get) => ({
                     updated_at: new Date().toISOString(),
                 };
 
+                const initialSettings = createDefaultAgentSettings();
+
                 set({
                     hasInitializedSessions: true,
                     sessions: [session],
                     currentSessionId: id,
                     messages: [initialMessage],
+                    systemPrompt: initialSettings.systemPrompt,
+                    temperature: initialSettings.temperature,
+                    sessionAgentSettings: {
+                        ...get().sessionAgentSettings,
+                        [id]: initialSettings,
+                    },
                     sessionError: '',
                 });
                 return;
@@ -91,12 +193,24 @@ export const useChatStore = create((set, get) => ({
 
             const currentId = list[0].id;
             const history = await fetchMessagesBySession(currentId);
+            const nextAgentSettings = { ...get().sessionAgentSettings };
+
+            for (const session of list) {
+                if (!nextAgentSettings[session.id]) {
+                    nextAgentSettings[session.id] = createDefaultAgentSettings();
+                }
+            }
+
+            const currentAgentSettings = nextAgentSettings[currentId] || createDefaultAgentSettings();
 
             set({
                 hasInitializedSessions: true,
                 sessions: list,
                 currentSessionId: currentId,
                 messages: history.length > 0 ? history : [initialMessage],
+                systemPrompt: currentAgentSettings.systemPrompt,
+                temperature: currentAgentSettings.temperature,
+                sessionAgentSettings: nextAgentSettings,
                 sessionError: '',
             });
         } catch (error) {
@@ -132,6 +246,24 @@ export const useChatStore = create((set, get) => ({
 
             set({
                 messages: history.length > 0 ? history : [initialMessage],
+                systemPrompt: (() => {
+                    const saved = state.sessionAgentSettings[id];
+                    return saved ? saved.systemPrompt : DEFAULT_SYSTEM_PROMPT;
+                })(),
+                temperature: (() => {
+                    const saved = state.sessionAgentSettings[id];
+                    return saved ? normalizeTemperatureValue(saved.temperature) : DEFAULT_TEMPERATURE;
+                })(),
+                sessionAgentSettings: (() => {
+                    if (state.sessionAgentSettings[id]) {
+                        return state.sessionAgentSettings;
+                    }
+
+                    return {
+                        ...state.sessionAgentSettings,
+                        [id]: createDefaultAgentSettings(),
+                    };
+                })(),
             });
         } catch (error) {
             const state = get();
@@ -177,13 +309,20 @@ export const useChatStore = create((set, get) => ({
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
             };
+            const defaultSettings = createDefaultAgentSettings();
 
             set((state) => ({
+                systemPrompt: defaultSettings.systemPrompt,
+                temperature: defaultSettings.temperature,
                 hasInitializedSessions: true,
                 sessions: [newSession, ...state.sessions],
                 currentSessionId: id,
                 messages: [initialMessage],
                 isTyping: false,
+                sessionAgentSettings: {
+                    ...state.sessionAgentSettings,
+                    [id]: defaultSettings,
+                },
                 sessionError: '',
             }));
         } catch (error) {
@@ -242,10 +381,18 @@ export const useChatStore = create((set, get) => ({
                     updated_at: new Date().toISOString(),
                 };
 
+                const defaultSettings = createDefaultAgentSettings();
+                const nextSettingsMap = { ...state.sessionAgentSettings };
+                delete nextSettingsMap[id];
+                nextSettingsMap[newId] = defaultSettings;
+
                 set({
                     sessions: [fallbackSession],
                     currentSessionId: newId,
                     messages: [initialMessage],
+                    systemPrompt: defaultSettings.systemPrompt,
+                    temperature: defaultSettings.temperature,
+                    sessionAgentSettings: nextSettingsMap,
                     sessionError: '',
                 });
                 return;
@@ -254,10 +401,35 @@ export const useChatStore = create((set, get) => ({
             const nextSessionId =
                 state.currentSessionId === id ? remainingSessions[0].id : state.currentSessionId;
 
-            set({
-                sessions: sortSessionsByUpdatedAt(remainingSessions),
-                currentSessionId: nextSessionId,
-                sessionError: '',
+            set((state) => {
+                const nextSettingsMap = { ...state.sessionAgentSettings };
+                delete nextSettingsMap[id];
+
+                if (state.currentSessionId !== id) {
+                    return {
+                        sessions: sortSessionsByUpdatedAt(remainingSessions),
+                        currentSessionId: nextSessionId,
+                        sessionAgentSettings: nextSettingsMap,
+                        sessionError: '',
+                    };
+                }
+
+                const activeSettings =
+                    nextSettingsMap[nextSessionId] ||
+                    createDefaultAgentSettings();
+
+                if (!nextSettingsMap[nextSessionId]) {
+                    nextSettingsMap[nextSessionId] = activeSettings;
+                }
+
+                return {
+                    sessions: sortSessionsByUpdatedAt(remainingSessions),
+                    currentSessionId: nextSessionId,
+                    systemPrompt: activeSettings.systemPrompt,
+                    temperature: normalizeTemperatureValue(activeSettings.temperature),
+                    sessionAgentSettings: nextSettingsMap,
+                    sessionError: '',
+                };
             });
 
             if (state.currentSessionId === id && nextSessionId) {
@@ -292,6 +464,14 @@ export const useChatStore = create((set, get) => ({
         const { enableWebSearch = true } = options;
         const state = useChatStore.getState();
         const sessionId = state.currentSessionId;
+
+        const sessionSpecificSettings = sessionId
+            ? state.sessionAgentSettings[sessionId]
+            : null;
+        const systemPrompt = sessionSpecificSettings?.systemPrompt ?? state.systemPrompt;
+        const temperature = normalizeTemperatureValue(
+            sessionSpecificSettings?.temperature ?? state.temperature
+        );
 
         if (!sessionId) {
             return;
@@ -497,7 +677,14 @@ export const useChatStore = create((set, get) => ({
             {
                 signal: controller.signal,
                 enableWebSearch,
+                systemPrompt,
+                temperature,
             }
         );
     },
+}), {
+    name: 'chat-agent-settings',
+    partialize: (state) => ({
+        sessionAgentSettings: state.sessionAgentSettings,
+    }),
 }));

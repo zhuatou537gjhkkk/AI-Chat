@@ -228,7 +228,13 @@ app.post("/chat", async (req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    const { session_id, message, enable_web_search } = req.body || {};
+    const {
+        session_id,
+        message,
+        enable_web_search,
+        systemPrompt,
+        temperature
+    } = req.body || {};
     const sessionId = Number(session_id);
     const enableWebSearch = enable_web_search !== false;
 
@@ -276,7 +282,11 @@ app.post("/chat", async (req, res) => {
         return;
     }
 
-    await chatWithStream(sessionId, message, res, { enableWebSearch });
+    await chatWithStream(sessionId, message, res, {
+        enableWebSearch,
+        systemPrompt,
+        temperature
+    });
 });
 
 app.listen(PORT, () => {

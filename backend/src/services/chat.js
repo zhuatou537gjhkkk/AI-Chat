@@ -7,6 +7,8 @@ import { agentTools } from "../mcp/tools.js";
 
 const WEB_SEARCH_TOOL_NAME = "web_search";
 const FORCED_WEB_SEARCH_MAX_CHARS = 8000;
+const DEFAULT_SYSTEM_PROMPT = "你是一个有用的 AI 助手。";
+const DEFAULT_TEMPERATURE = 0.7;
 
 function toLangChainMessage(message) {
     if (message.role === "user") {
@@ -48,25 +50,55 @@ function normalizeChunkContent(content) {
     return String(content);
 }
 
-const chatModel = new ChatOpenAI({
-    modelName: "qwen-turbo",
-    temperature: 0.2,
-    streaming: true
-});
+function normalizeTemperature(input) {
+    const value = Number(input);
+    if (!Number.isFinite(value)) {
+        return DEFAULT_TEMPERATURE;
+    }
 
-function buildPrompt(enableWebSearch) {
+    return Math.max(0, Math.min(1, value));
+}
+
+function resolveSystemPrompt(input) {
+    const prompt = String(input || "").trim();
+    return prompt || DEFAULT_SYSTEM_PROMPT;
+}
+
+function isCreativeTask(input, systemPrompt) {
+    const merged = `${String(input || "")}\n${String(systemPrompt || "")}`.toLowerCase();
+    return /(slogan|标语|文案|广告语|取名|命名|润色|改写|创意|头脑风暴|branding|copywriting)/.test(merged);
+}
+
+function buildDirectAnswerSystemInstruction(enableWebSearch, userSystemPrompt) {
+    const creativeGuard =
+        "创意写作类任务（如标语、文案、命名、润色、头脑风暴）默认不调用任何工具，直接给出高质量结果。仅当用户明确要求基于上传文档证据时才允许调用 search_knowledge_base。";
+    const noWebSearchGuard =
+        "本轮已关闭联网检索：不要调用 web_search。若不是文档事实问答，也不要调用 search_knowledge_base。";
+
+    return enableWebSearch
+        ? `${userSystemPrompt}\n\n${creativeGuard}`
+        : `${userSystemPrompt}\n\n${creativeGuard}\n${noWebSearchGuard}`;
+}
+
+function buildPrompt(enableWebSearch, userSystemPrompt) {
     const baseInstruction =
-        "你是一个资深 AI 助手。当前系统时间是：{current_date}。请优先基于可验证信息回答，保持结论清晰、结构化。";
+        `${userSystemPrompt}\n\n当前系统时间是：{current_date}。请优先基于可验证信息回答，保持结论清晰、结构化。`;
+
+    const creativeTaskInstruction =
+        "若用户请求是创意写作（如标语、文案、命名、润色、头脑风暴），请直接创作答案，不要调用工具。仅当用户明确要求“基于上传文档/证据”时才调用 search_knowledge_base。";
 
     const webSearchInstruction =
         "当你无法确定事实或用户询问最新资讯时，请务必主动使用 web_search 工具获取真实信息，并结合搜索结果进行总结回答。凡是公开互联网新闻、时事、公司动态、人物动态等问题，优先使用 web_search，不要误用 search_knowledge_base。同一轮回答默认只调用一次 web_search，除非用户明确要求追加检索。你必须基于 web_search 返回的条目作答，不得编造未检索到的事实。若用户要求时间窗口（如最近24小时、最近一周、最近一个月等），优先满足时间约束并明确说明命中情况；若工具返回“待核验”或“超窗候选”，必须在回答中显式标注其可靠性限制。";
 
     const noWebSearchInstruction =
-        "本轮已关闭联网检索：不要调用 web_search，也不要假设你看到了实时网页结果。若问题依赖最新外部信息，请明确说明当前未启用联网，提示用户开启后再查证。";
+        "本轮已关闭联网检索：不要调用 web_search，也不要假设你看到了实时网页结果。若问题依赖最新外部信息，请明确说明当前未启用联网，提示用户开启后再查证。如果不是文档事实问答，不要调用 search_knowledge_base。";
+
+    const toolRetryInstruction =
+        "如果工具返回“当前知识库为空”或“未检索到相关知识片段”，立即停止继续调用该工具，并直接给出不依赖该工具的回答。";
 
     const systemInstruction = enableWebSearch
-        ? `${baseInstruction}${webSearchInstruction}`
-        : `${baseInstruction}${noWebSearchInstruction}`;
+        ? `${baseInstruction}\n\n${creativeTaskInstruction}\n\n${webSearchInstruction}\n\n${toolRetryInstruction}`
+        : `${baseInstruction}\n\n${creativeTaskInstruction}\n\n${noWebSearchInstruction}\n\n${toolRetryInstruction}`;
 
     return ChatPromptTemplate.fromMessages([
         ["system", systemInstruction],
@@ -76,37 +108,70 @@ function buildPrompt(enableWebSearch) {
     ]);
 }
 
-const agentExecutorPromiseMap = new Map();
+async function getAgentExecutor(enableWebSearch, temperature, systemPrompt) {
+    const tools = enableWebSearch
+        ? agentTools
+        : agentTools.filter((tool) => tool.name !== WEB_SEARCH_TOOL_NAME);
 
-async function getAgentExecutor(enableWebSearch) {
-    const cacheKey = enableWebSearch ? "web-on" : "web-off";
-    if (!agentExecutorPromiseMap.has(cacheKey)) {
-        const tools = enableWebSearch
-            ? agentTools
-            : agentTools.filter((tool) => tool.name !== WEB_SEARCH_TOOL_NAME);
-        const prompt = buildPrompt(enableWebSearch);
+    const llm = new ChatOpenAI({
+        modelName: "qwen-turbo",
+        temperature,
+        streaming: true
+    });
+    const prompt = buildPrompt(enableWebSearch, systemPrompt);
+    const agent = await createToolCallingAgent({
+        llm,
+        tools,
+        prompt
+    });
 
-        const executorPromise = (async () => {
-            const agent = await createToolCallingAgent({
-                llm: chatModel,
-                tools,
-                prompt
-            });
+    return new AgentExecutor({
+        agent,
+        tools,
+        maxIterations: 4,
+        earlyStoppingMethod: "generate"
+    });
+}
 
-            return new AgentExecutor({
-                agent,
-                tools
-            });
-        })();
+async function streamDirectChat({
+    userMessage,
+    formattedHistory,
+    res,
+    systemInstruction,
+    temperature
+}) {
+    const llm = new ChatOpenAI({
+        modelName: "qwen-turbo",
+        temperature,
+        streaming: true
+    });
 
-        agentExecutorPromiseMap.set(cacheKey, executorPromise);
+    const messages = [
+        new SystemMessage(systemInstruction),
+        ...formattedHistory,
+        new HumanMessage(userMessage)
+    ];
+
+    let fullText = "";
+    const stream = await llm.stream(messages);
+
+    for await (const chunk of stream) {
+        const text = normalizeChunkContent(chunk?.content);
+        if (!text) {
+            continue;
+        }
+
+        fullText += text;
+        res.write(`data: ${JSON.stringify({ type: "text", text })}\n\n`);
     }
 
-    return agentExecutorPromiseMap.get(cacheKey);
+    return fullText;
 }
 
 export async function chatWithStream(session_id, userMessage, res, options = {}) {
     const { enableWebSearch = true } = options;
+    const temperature = normalizeTemperature(options.temperature);
+    const systemPrompt = resolveSystemPrompt(options.systemPrompt);
     saveMessage(session_id, "user", userMessage);
 
     const history = getHistoryMessages(session_id, 10);
@@ -125,8 +190,25 @@ export async function chatWithStream(session_id, userMessage, res, options = {})
 
     let fullText = "";
     let inputForAgent = userMessage;
+    const shouldBypassTools = isCreativeTask(userMessage, systemPrompt);
 
     try {
+        if (shouldBypassTools) {
+            const directSystemInstruction = buildDirectAnswerSystemInstruction(enableWebSearch, systemPrompt);
+            fullText = await streamDirectChat({
+                userMessage,
+                formattedHistory,
+                res,
+                systemInstruction: directSystemInstruction,
+                temperature
+            });
+
+            saveMessage(session_id, "assistant", fullText);
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+        }
+
         if (enableWebSearch) {
             const webSearchTool = agentTools.find((tool) => tool.name === WEB_SEARCH_TOOL_NAME);
 
@@ -169,7 +251,7 @@ export async function chatWithStream(session_id, userMessage, res, options = {})
             }
         }
 
-        const agentExecutor = await getAgentExecutor(enableWebSearch);
+        const agentExecutor = await getAgentExecutor(enableWebSearch, temperature, systemPrompt);
         const eventStream = await agentExecutor.streamEvents(
             {
                 input: inputForAgent,

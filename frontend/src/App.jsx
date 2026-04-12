@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import ChatInput from './components/ChatInput';
 import ChatList from './components/ChatList';
+import SettingsModal from './components/SettingsModal';
 import Sidebar from './components/Sidebar';
 import { useChatStore } from './store/chatStore';
 
@@ -14,6 +15,7 @@ export default function App() {
 
     return (
         <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-900">
+            <SettingsModal />
             <Sidebar className="hidden md:flex" />
 
             {sidebarOpen && (
