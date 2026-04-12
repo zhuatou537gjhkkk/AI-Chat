@@ -4,11 +4,12 @@ import { uploadFile } from '../api/chat';
 
 export default function ChatInput() {
     const [value, setValue] = useState('');
-    const [enableWebSearch, setEnableWebSearch] = useState(true);
     const [uploadStatus, setUploadStatus] = useState('');
     const textareaRef = useRef(null);
     const fileInputRef = useRef(null);
     const sendMessage = useChatStore((state) => state.sendMessage);
+    const enableWebSearch = useChatStore((state) => state.enableWebSearch);
+    const setEnableWebSearch = useChatStore((state) => state.setEnableWebSearch);
     const isTyping = useChatStore((state) => state.isTyping);
     const stopMessageStream = useChatStore((state) => state.stopMessageStream);
     const retryLastFailedMessage = useChatStore((state) => state.retryLastFailedMessage);
@@ -140,7 +141,7 @@ export default function ChatInput() {
                     <div className="flex items-center">
                         <button
                             type="button"
-                            onClick={() => setEnableWebSearch((prev) => !prev)}
+                            onClick={() => setEnableWebSearch(!enableWebSearch)}
                             className={`h-11 rounded-xl border px-3 text-xs font-medium transition outline-none ${enableWebSearch
                                 ? 'border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100'
                                 : 'border-gray-300 bg-white text-slate-700 hover:bg-slate-50'

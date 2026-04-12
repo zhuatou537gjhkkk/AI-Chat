@@ -13,6 +13,7 @@ export default function Sidebar({ className = '', onAfterSelect }) {
     const addNewSession = useChatStore((state) => state.addNewSession);
     const renameSession = useChatStore((state) => state.renameSession);
     const deleteSession = useChatStore((state) => state.deleteSession);
+    const toggleSessionPin = useChatStore((state) => state.toggleSessionPin);
     const toggleSettings = useChatStore((state) => state.toggleSettings);
 
     const filteredSessions = useMemo(() => {
@@ -58,6 +59,11 @@ export default function Sidebar({ className = '', onAfterSelect }) {
         }
 
         await deleteSession(sessionId);
+    };
+
+    const handlePin = async (event, sessionId) => {
+        event.stopPropagation();
+        await toggleSessionPin(sessionId);
     };
 
     return (
@@ -115,6 +121,14 @@ export default function Sidebar({ className = '', onAfterSelect }) {
                                         <div className="flex shrink-0 items-center gap-1">
                                             <button
                                                 type="button"
+                                                onClick={(event) => handlePin(event, session.id)}
+                                                aria-label={session.pinned ? '取消置顶会话' : '置顶会话'}
+                                                className="rounded px-1 text-[10px] text-amber-300 hover:bg-amber-500/20"
+                                            >
+                                                {session.pinned ? '取消顶' : '置顶'}
+                                            </button>
+                                            <button
+                                                type="button"
                                                 onClick={(event) => handleRename(event, session)}
                                                 aria-label="重命名会话"
                                                 className="rounded px-1 text-[10px] text-gray-300 hover:bg-gray-600/60"
@@ -132,6 +146,7 @@ export default function Sidebar({ className = '', onAfterSelect }) {
                                         </div>
                                     </div>
                                     <p className="mt-1 truncate text-xs text-gray-400">
+                                        {session.pinned ? '📌 置顶 · ' : ''}
                                         {new Date(session.updated_at || session.created_at).toLocaleString()}
                                     </p>
                                 </button>

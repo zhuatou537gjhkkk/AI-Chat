@@ -7,6 +7,7 @@ import {
     fetchMessagesBySession,
     updateSessionTitle,
     deleteSession as deleteSessionApi,
+    updateSessionPin,
 } from '../api/chat';
 
 const initialMessage = {
@@ -48,8 +49,20 @@ function isDefaultSessionTitle(title) {
     return !title || title === DEFAULT_SESSION_TITLE;
 }
 
-function sortSessionsByUpdatedAt(sessions) {
+function sortSessions(sessions) {
     return [...sessions].sort((a, b) => {
+        const aPinned = Number(a.pinned || 0);
+        const bPinned = Number(b.pinned || 0);
+        if (aPinned !== bPinned) {
+            return bPinned - aPinned;
+        }
+
+        const aPinnedAt = new Date(a.pinned_at || 0).getTime();
+        const bPinnedAt = new Date(b.pinned_at || 0).getTime();
+        if (aPinnedAt !== bPinnedAt) {
+            return bPinnedAt - aPinnedAt;
+        }
+
         const aTime = new Date(a.updated_at || a.created_at || 0).getTime();
         const bTime = new Date(b.updated_at || b.created_at || 0).getTime();
         return bTime - aTime;
@@ -70,10 +83,20 @@ export const useChatStore = create(persist((set, get) => ({
     lastFailedRequest: null,
     messages: [initialMessage],
     isTyping: false,
+    enableWebSearch: false,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     temperature: DEFAULT_TEMPERATURE,
     sessionAgentSettings: {},
     isSettingsOpen: false,
+    setEnableWebSearch: (enabled) => {
+        set((state) => {
+            const nextValue = typeof enabled === 'function'
+                ? enabled(state.enableWebSearch)
+                : enabled;
+
+            return { enableWebSearch: Boolean(nextValue) };
+        });
+    },
     setSystemPrompt: (prompt) => {
         const nextPrompt = String(prompt ?? '');
 
@@ -342,7 +365,7 @@ export const useChatStore = create(persist((set, get) => ({
         try {
             await updateSessionTitle(id, safeTitle);
             set((state) => ({
-                sessions: sortSessionsByUpdatedAt(state.sessions.map((session) => {
+                sessions: sortSessions(state.sessions.map((session) => {
                     if (session.id !== id) {
                         return session;
                     }
@@ -357,6 +380,36 @@ export const useChatStore = create(persist((set, get) => ({
             }));
         } catch (error) {
             set({ sessionError: '重命名失败，请稍后重试。' });
+        }
+    },
+    toggleSessionPin: async (id) => {
+        const state = get();
+        const target = state.sessions.find((session) => session.id === id);
+        if (!target) {
+            return;
+        }
+
+        const nextPinned = !Boolean(target.pinned);
+
+        try {
+            await updateSessionPin(id, nextPinned);
+            set((current) => ({
+                sessions: sortSessions(current.sessions.map((session) => {
+                    if (session.id !== id) {
+                        return session;
+                    }
+
+                    return {
+                        ...session,
+                        pinned: nextPinned ? 1 : 0,
+                        pinned_at: nextPinned ? new Date().toISOString() : null,
+                        updated_at: new Date().toISOString(),
+                    };
+                })),
+                sessionError: '',
+            }));
+        } catch (error) {
+            set({ sessionError: '置顶操作失败，请稍后重试。' });
         }
     },
     deleteSession: async (id) => {
@@ -407,7 +460,7 @@ export const useChatStore = create(persist((set, get) => ({
 
                 if (state.currentSessionId !== id) {
                     return {
-                        sessions: sortSessionsByUpdatedAt(remainingSessions),
+                        sessions: sortSessions(remainingSessions),
                         currentSessionId: nextSessionId,
                         sessionAgentSettings: nextSettingsMap,
                         sessionError: '',
@@ -423,7 +476,7 @@ export const useChatStore = create(persist((set, get) => ({
                 }
 
                 return {
-                    sessions: sortSessionsByUpdatedAt(remainingSessions),
+                    sessions: sortSessions(remainingSessions),
                     currentSessionId: nextSessionId,
                     systemPrompt: activeSettings.systemPrompt,
                     temperature: normalizeTemperatureValue(activeSettings.temperature),
@@ -457,11 +510,40 @@ export const useChatStore = create(persist((set, get) => ({
         }
 
         await get().sendMessage(failedRequest.content, {
-            enableWebSearch: failedRequest.enableWebSearch,
+            enableWebSearch: get().enableWebSearch,
         });
     },
+    retryMessageById: async (messageId) => {
+        if (get().isTyping) {
+            return;
+        }
+
+        const messages = get().messages;
+        const targetIndex = messages.findIndex((item) => String(item.id) === String(messageId));
+        if (targetIndex < 0) {
+            return;
+        }
+
+        const target = messages[targetIndex];
+        if (target.role === 'user') {
+            await get().sendMessage(target.content, {
+                enableWebSearch: get().enableWebSearch,
+            });
+            return;
+        }
+
+        for (let i = targetIndex - 1; i >= 0; i -= 1) {
+            if (messages[i].role === 'user') {
+                await get().sendMessage(messages[i].content, {
+                    enableWebSearch: get().enableWebSearch,
+                });
+                return;
+            }
+        }
+    },
     sendMessage: async (content, options = {}) => {
-        const { enableWebSearch = true } = options;
+        const effectiveEnableWebSearch = options.enableWebSearch ?? get().enableWebSearch;
+        const enableWebSearch = Boolean(effectiveEnableWebSearch);
         const state = useChatStore.getState();
         const sessionId = state.currentSessionId;
 
@@ -481,6 +563,7 @@ export const useChatStore = create(persist((set, get) => ({
             id: `user-${Date.now()}`,
             role: 'user',
             content,
+            enableWebSearch: Boolean(enableWebSearch),
         };
 
         const assistantMessageId = `assistant-${Date.now()}`;
@@ -489,6 +572,8 @@ export const useChatStore = create(persist((set, get) => ({
             role: 'assistant',
             content: '',
             toolLogs: [],
+            thoughtLogs: [],
+            enableWebSearch: Boolean(enableWebSearch),
         };
 
         const streamToken = `${sessionId}-${Date.now()}`;
@@ -497,7 +582,7 @@ export const useChatStore = create(persist((set, get) => ({
             messages: [...state.messages, userMessage, assistantMessage],
             isTyping: true,
             lastFailedUserMessage: '',
-            sessions: sortSessionsByUpdatedAt(
+            sessions: sortSessions(
                 state.sessions.map((session) => {
                     if (session.id !== sessionId) {
                         return session;
@@ -590,6 +675,7 @@ export const useChatStore = create(persist((set, get) => ({
                         }
 
                         const currentToolLogs = Array.isArray(tail.toolLogs) ? [...tail.toolLogs] : [];
+                        const currentThoughtLogs = Array.isArray(tail.thoughtLogs) ? [...tail.thoughtLogs] : [];
 
                         if (toolData?.type === 'tool_start') {
                             currentToolLogs.push({
@@ -612,9 +698,18 @@ export const useChatStore = create(persist((set, get) => ({
                             }
                         }
 
+                        if (toolData?.type === 'thought' && toolData?.text) {
+                            currentThoughtLogs.push({
+                                text: toolData.text,
+                                status: toolData.status || 'running',
+                                at: toolData.at || new Date().toISOString(),
+                            });
+                        }
+
                         nextMessages[tailIndex] = {
                             ...tail,
                             toolLogs: currentToolLogs,
+                            thoughtLogs: currentThoughtLogs,
                         };
 
                         return nextMessages;
@@ -686,5 +781,6 @@ export const useChatStore = create(persist((set, get) => ({
     name: 'chat-agent-settings',
     partialize: (state) => ({
         sessionAgentSettings: state.sessionAgentSettings,
+        enableWebSearch: state.enableWebSearch,
     }),
 }));

@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { useChatStore } from '../store/chatStore';
 
 function parseStructuredWebSearchContent(content) {
     const text = String(content || '').trim();
@@ -186,8 +187,49 @@ function CodeRenderer({ inline, className, children, ...props }) {
 function MessageItem({ message }) {
     const isUser = message.role === 'user';
     const toolLogs = Array.isArray(message.toolLogs) ? message.toolLogs : [];
+    const thoughtLogs = Array.isArray(message.thoughtLogs) ? message.thoughtLogs : [];
+    const retryMessageById = useChatStore((state) => state.retryMessageById);
+    const [copied, setCopied] = useState(false);
+    const [isReading, setIsReading] = useState(false);
     const structuredSearchResult =
         message.role === 'assistant' ? parseStructuredWebSearchContent(message.content) : null;
+
+    useEffect(() => () => {
+        if (window.speechSynthesis?.speaking) {
+            window.speechSynthesis.cancel();
+        }
+    }, []);
+
+    const handleCopyMessage = async () => {
+        try {
+            await navigator.clipboard.writeText(String(message.content || ''));
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1200);
+        } catch {
+            setCopied(false);
+        }
+    };
+
+    const handleToggleRead = () => {
+        if (!window.speechSynthesis) {
+            return;
+        }
+
+        if (isReading || window.speechSynthesis.speaking) {
+            window.speechSynthesis.cancel();
+            setIsReading(false);
+            return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(String(message.content || ''));
+        utterance.lang = 'zh-CN';
+        utterance.rate = 1;
+        utterance.onend = () => setIsReading(false);
+        utterance.onerror = () => setIsReading(false);
+
+        setIsReading(true);
+        window.speechSynthesis.speak(utterance);
+    };
 
     const renderToolLogs = () => {
         if (toolLogs.length === 0) {
@@ -202,6 +244,25 @@ function MessageItem({ message }) {
                     </div>
                 ))}
             </div>
+        );
+    };
+
+    const renderThoughtLogs = () => {
+        if (thoughtLogs.length === 0) {
+            return null;
+        }
+
+        return (
+            <details className="mb-2 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs text-indigo-800">
+                <summary className="cursor-pointer select-none font-medium">思考过程</summary>
+                <div className="mt-2 space-y-1">
+                    {thoughtLogs.map((log, index) => (
+                        <div key={`${log.at || 'thought'}-${index}`} className="whitespace-pre-wrap break-words">
+                            {`- ${log.text}${log.status === 'done' ? ' ✅' : log.status === 'error' ? ' ❌' : ''}`}
+                        </div>
+                    ))}
+                </div>
+            </details>
         );
     };
 
@@ -324,10 +385,39 @@ function MessageItem({ message }) {
                     <p className="whitespace-pre-wrap break-words">{message.content}</p>
                 ) : (
                     <div className="break-words [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-6">
+                        {renderThoughtLogs()}
                         {renderToolLogs()}
                         {renderAssistantContent()}
                     </div>
                 )}
+
+                <div className={`mt-2 flex items-center gap-2 text-xs ${isUser ? 'justify-end' : 'justify-start'}`}>
+                    <button
+                        type="button"
+                        onClick={handleCopyMessage}
+                        className="rounded border border-slate-300 px-2 py-0.5 text-slate-700 transition hover:bg-slate-100"
+                    >
+                        {copied ? '已复制' : '复制'}
+                    </button>
+                    {!isUser && (
+                        <>
+                            <button
+                                type="button"
+                                onClick={handleToggleRead}
+                                className="rounded border border-slate-300 px-2 py-0.5 text-slate-700 transition hover:bg-slate-100"
+                            >
+                                {isReading ? '停止朗读' : '朗读'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => retryMessageById(message.id)}
+                                className="rounded border border-slate-300 px-2 py-0.5 text-slate-700 transition hover:bg-slate-100"
+                            >
+                                重试
+                            </button>
+                        </>
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -338,12 +428,15 @@ export default memo(
     (prevProps, nextProps) => {
         const prevLogs = prevProps.message?.toolLogs || [];
         const nextLogs = nextProps.message?.toolLogs || [];
+        const prevThoughtLogs = prevProps.message?.thoughtLogs || [];
+        const nextThoughtLogs = nextProps.message?.thoughtLogs || [];
 
         return (
             prevProps.message?.id === nextProps.message?.id &&
             prevProps.message?.role === nextProps.message?.role &&
             prevProps.message?.content === nextProps.message?.content &&
-            JSON.stringify(prevLogs) === JSON.stringify(nextLogs)
+            JSON.stringify(prevLogs) === JSON.stringify(nextLogs) &&
+            JSON.stringify(prevThoughtLogs) === JSON.stringify(nextThoughtLogs)
         );
     }
 );

@@ -9,7 +9,8 @@ import {
     createSession,
     getSessions,
     renameSession,
-    removeSession
+    removeSession,
+    toggleSessionPin
 } from "./db/index.js";
 import { chatWithStream } from "./services/chat.js";
 import {
@@ -129,6 +130,30 @@ app.delete("/sessions/:id", (req, res) => {
     });
 });
 
+app.patch("/sessions/:id/pin", (req, res) => {
+    const sessionId = Number(req.params.id);
+    const pinned = Boolean(req.body?.pinned);
+
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+        return res.status(400).json({
+            ok: false,
+            message: "invalid session id"
+        });
+    }
+
+    const result = toggleSessionPin(sessionId, pinned);
+    if (!result?.changes) {
+        return res.status(404).json({
+            ok: false,
+            message: "session not found"
+        });
+    }
+
+    return res.json({
+        ok: true
+    });
+});
+
 app.get("/sessions/:id/messages", (req, res) => {
     const sessionId = Number(req.params.id);
 
@@ -211,7 +236,7 @@ app.post("/chat", async (req, res) => {
         temperature
     } = req.body || {};
     const sessionId = Number(session_id);
-    const enableWebSearch = enable_web_search !== false;
+    const enableWebSearch = enable_web_search === true;
 
     if (!Number.isInteger(sessionId) || sessionId <= 0 || !message) {
         res.write(

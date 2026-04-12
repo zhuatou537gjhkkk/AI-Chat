@@ -56,6 +56,22 @@ export async function deleteSession(id) {
     return response.json();
 }
 
+export async function updateSessionPin(id, pinned) {
+    const response = await fetch(`${BASE_URL}/sessions/${id}/pin`, {
+        method: 'PATCH',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ pinned }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    return response.json();
+}
+
 export async function fetchMessagesBySession(id) {
     const response = await fetch(`${BASE_URL}/sessions/${id}/messages`);
 
@@ -70,7 +86,7 @@ export async function fetchMessagesBySession(id) {
 export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, onDone, onError, options = {}) {
     const {
         signal,
-        enableWebSearch = true,
+        enableWebSearch = false,
         systemPrompt = '你是一个有用的 AI 助手。',
         temperature = 0.7,
     } = options;
@@ -142,7 +158,7 @@ export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, 
                             continue;
                         }
 
-                        if (eventType === 'tool_start' || eventType === 'tool_end') {
+                        if (eventType === 'tool_start' || eventType === 'tool_end' || eventType === 'thought') {
                             onToolEvent(parsed);
                         }
                     } catch (parseError) {

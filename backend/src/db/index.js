@@ -15,6 +15,7 @@ let selectMessageStatsStmt = null;
 let insertSessionStmt = null;
 let selectSessionsStmt = null;
 let updateSessionTitleStmt = null;
+let updateSessionPinStmt = null;
 let deleteSessionStmt = null;
 let deleteSessionMessagesStmt = null;
 let touchSessionStmt = null;
@@ -37,14 +38,26 @@ function getTableColumns(tableName) {
 function ensureSessionColumns() {
     const columns = getTableColumns("sessions");
     const hasUpdatedAt = columns.some((column) => column.name === "updated_at");
+    const hasPinned = columns.some((column) => column.name === "pinned");
+    const hasPinnedAt = columns.some((column) => column.name === "pinned_at");
 
     if (!hasUpdatedAt) {
         db.prepare("ALTER TABLE sessions ADD COLUMN updated_at DATETIME").run();
     }
 
+    if (!hasPinned) {
+        db.prepare("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0").run();
+    }
+
+    if (!hasPinnedAt) {
+        db.prepare("ALTER TABLE sessions ADD COLUMN pinned_at DATETIME").run();
+    }
+
     db.prepare(
         "UPDATE sessions SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)"
     ).run();
+
+    db.prepare("UPDATE sessions SET pinned = COALESCE(pinned, 0)").run();
 }
 
 function ensureMessageColumns() {
@@ -78,7 +91,9 @@ export function initDB() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                pinned_at DATETIME
       )
     `
     ).run();
@@ -130,13 +145,19 @@ export function initDB() {
 
     if (!selectSessionsStmt) {
         selectSessionsStmt = db.prepare(
-            "SELECT id, title, created_at, updated_at FROM sessions ORDER BY updated_at DESC, id DESC"
+            "SELECT id, title, created_at, updated_at, pinned, pinned_at FROM sessions ORDER BY pinned DESC, pinned_at DESC, updated_at DESC, id DESC"
         );
     }
 
     if (!updateSessionTitleStmt) {
         updateSessionTitleStmt = db.prepare(
             "UPDATE sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        );
+    }
+
+    if (!updateSessionPinStmt) {
+        updateSessionPinStmt = db.prepare(
+            "UPDATE sessions SET pinned = ?, pinned_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
         );
     }
 
@@ -217,6 +238,15 @@ export function removeSession(session_id) {
     });
 
     return tx(session_id);
+}
+
+export function toggleSessionPin(session_id, pinned) {
+    if (!updateSessionPinStmt) {
+        initDB();
+    }
+
+    const pinnedValue = pinned ? 1 : 0;
+    return updateSessionPinStmt.run(pinnedValue, pinnedValue, session_id);
 }
 
 export function getHistoryMessages(session_id, limit = 20) {

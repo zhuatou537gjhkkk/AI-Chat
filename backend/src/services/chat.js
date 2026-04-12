@@ -10,6 +10,17 @@ const FORCED_WEB_SEARCH_MAX_CHARS = 8000;
 const DEFAULT_SYSTEM_PROMPT = "你是一个有用的 AI 助手。";
 const DEFAULT_TEMPERATURE = 0.7;
 
+function emitThought(res, text, status = "running") {
+    res.write(
+        `data: ${JSON.stringify({
+            type: "thought",
+            text,
+            status,
+            at: new Date().toISOString()
+        })}\n\n`
+    );
+}
+
 function toLangChainMessage(message) {
     if (message.role === "user") {
         return new HumanMessage(message.content);
@@ -170,7 +181,7 @@ async function streamDirectChat({
 
 export async function chatWithStream(session_id, userMessage, res, options = {}) {
     const {
-        enableWebSearch = true,
+        enableWebSearch = false,
         skipUserMessageSave = false,
         userMessageForStorage
     } = options;
@@ -199,7 +210,10 @@ export async function chatWithStream(session_id, userMessage, res, options = {})
     const shouldBypassTools = isCreativeTask(userMessage, systemPrompt);
 
     try {
+        emitThought(res, "正在分析你的问题");
+
         if (shouldBypassTools) {
+            emitThought(res, "识别为直接回答任务，准备生成结果");
             const directSystemInstruction = buildDirectAnswerSystemInstruction(enableWebSearch, systemPrompt);
             fullText = await streamDirectChat({
                 userMessage,
@@ -210,12 +224,14 @@ export async function chatWithStream(session_id, userMessage, res, options = {})
             });
 
             saveMessage(session_id, "assistant", fullText);
+            emitThought(res, "回答生成完成", "done");
             res.write("data: [DONE]\n\n");
             res.end();
             return;
         }
 
         if (enableWebSearch) {
+            emitThought(res, "需要联网信息，正在准备搜索");
             const webSearchTool = agentTools.find((tool) => tool.name === WEB_SEARCH_TOOL_NAME);
 
             if (webSearchTool) {
@@ -253,9 +269,12 @@ export async function chatWithStream(session_id, userMessage, res, options = {})
 
                 if (forcedSearchOutput) {
                     inputForAgent = `${userMessage}\n\n[系统提示] 已按“联网:开”强制执行一次 web_search，请优先基于以下检索结果回答；如证据不足可再调用 web_search 补充。\n${forcedSearchOutput}`;
+                    emitThought(res, "已获取联网结果，正在组织回答");
                 }
             }
         }
+
+        emitThought(res, "正在调用模型生成回答");
 
         const agentExecutor = await getAgentExecutor(enableWebSearch, temperature, systemPrompt);
         const eventStream = await agentExecutor.streamEvents(
@@ -312,9 +331,11 @@ export async function chatWithStream(session_id, userMessage, res, options = {})
         }
 
         saveMessage(session_id, "assistant", fullText);
+        emitThought(res, "回答生成完成", "done");
         res.write("data: [DONE]\n\n");
         res.end();
     } catch (error) {
+        emitThought(res, "生成过程发生错误", "error");
         res.write(
             `data: ${JSON.stringify({ error: error.message || "stream failed" })}\n\n`
         );
