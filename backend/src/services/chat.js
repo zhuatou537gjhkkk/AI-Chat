@@ -54,7 +54,7 @@ const chatModel = new ChatOpenAI({
 const prompt = ChatPromptTemplate.fromMessages([
     [
         "system",
-        "你是一个具备联网能力的资深 AI 助手。当你无法确定事实或用户询问最新资讯时，请务必主动使用 web_search 工具获取真实信息，并结合搜索结果进行总结回答。凡是公开互联网新闻、时事、公司动态、人物动态等问题，优先使用 web_search，不要误用 search_knowledge_base。同一轮回答默认只调用一次 web_search，除非用户明确要求追加检索。你必须基于 web_search 返回的条目作答，不得编造未检索到的事实。若用户要求时间窗口（如最近24小时、最近一周、最近一个月等），优先满足时间约束并明确说明命中情况；若工具返回“待核验”或“超窗候选”，必须在回答中显式标注其可靠性限制。"
+        "你是一个具备联网能力的资深 AI 助手。当前系统时间是：{current_date}。当你无法确定事实或用户询问最新资讯时，请务必主动使用 web_search 工具获取真实信息，并结合搜索结果进行总结回答。凡是公开互联网新闻、时事、公司动态、人物动态等问题，优先使用 web_search，不要误用 search_knowledge_base。同一轮回答默认只调用一次 web_search，除非用户明确要求追加检索。你必须基于 web_search 返回的条目作答，不得编造未检索到的事实。若用户要求时间窗口（如最近24小时、最近一周、最近一个月等），优先满足时间约束并明确说明命中情况；若工具返回“待核验”或“超窗候选”，必须在回答中显式标注其可靠性限制。"
     ],
     new MessagesPlaceholder("chat_history"),
     ["user", "{input}"],
@@ -106,7 +106,8 @@ export async function chatWithStream(session_id, userMessage, res) {
         const eventStream = await agentExecutor.streamEvents(
             {
                 input: userMessage,
-                chat_history: formattedHistory
+                chat_history: formattedHistory,
+                current_date: new Date().toLocaleString()
             },
             { version: "v2" }
         );
@@ -117,6 +118,13 @@ export async function chatWithStream(session_id, userMessage, res) {
                 console.log(
                     `[agent][tool_start] at=${startedAt} name=${event.name || "unknown"} input=${JSON.stringify(event?.data?.input ?? {})}`
                 );
+                res.write(
+                    `data: ${JSON.stringify({
+                        type: "tool_start",
+                        toolName: event.name || "unknown",
+                        input: event?.data?.input ?? {}
+                    })}\n\n`
+                );
                 continue;
             }
 
@@ -124,6 +132,12 @@ export async function chatWithStream(session_id, userMessage, res) {
                 const endedAt = new Date().toISOString();
                 console.log(
                     `[agent][tool_end] at=${endedAt} name=${event.name || "unknown"} output=${JSON.stringify(event?.data?.output ?? "")}`
+                );
+                res.write(
+                    `data: ${JSON.stringify({
+                        type: "tool_end",
+                        toolName: event.name || "unknown"
+                    })}\n\n`
                 );
                 continue;
             }
@@ -139,7 +153,7 @@ export async function chatWithStream(session_id, userMessage, res) {
             }
 
             fullText += text;
-            res.write(`data: ${JSON.stringify({ text })}\n\n`);
+            res.write(`data: ${JSON.stringify({ type: "text", text })}\n\n`);
         }
 
         saveMessage(session_id, "assistant", fullText);

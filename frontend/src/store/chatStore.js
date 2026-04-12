@@ -304,6 +304,7 @@ export const useChatStore = create((set, get) => ({
             id: assistantMessageId,
             role: 'assistant',
             content: '',
+            toolLogs: [],
         };
 
         const streamToken = `${sessionId}-${Date.now()}`;
@@ -382,6 +383,54 @@ export const useChatStore = create((set, get) => ({
                         nextMessages[tailIndex] = {
                             ...tail,
                             content: tail.content + chunk,
+                        };
+
+                        return nextMessages;
+                    })(),
+                }));
+            },
+            (toolData) => {
+                const latest = get();
+                if (latest.currentSessionId !== sessionId || latest.activeStreamToken !== streamToken) {
+                    return;
+                }
+
+                set((state) => ({
+                    messages: (() => {
+                        const nextMessages = [...state.messages];
+                        const tailIndex = nextMessages.length - 1;
+                        const tail = nextMessages[tailIndex];
+
+                        if (!tail || tail.role !== 'assistant') {
+                            return state.messages;
+                        }
+
+                        const currentToolLogs = Array.isArray(tail.toolLogs) ? [...tail.toolLogs] : [];
+
+                        if (toolData?.type === 'tool_start') {
+                            currentToolLogs.push({
+                                name: toolData.toolName,
+                                input: toolData.input,
+                                status: 'running',
+                            });
+                        }
+
+                        if (toolData?.type === 'tool_end') {
+                            for (let i = currentToolLogs.length - 1; i >= 0; i -= 1) {
+                                const log = currentToolLogs[i];
+                                if (log.name === toolData.toolName && log.status === 'running') {
+                                    currentToolLogs[i] = {
+                                        ...log,
+                                        status: 'success',
+                                    };
+                                    break;
+                                }
+                            }
+                        }
+
+                        nextMessages[tailIndex] = {
+                            ...tail,
+                            toolLogs: currentToolLogs,
                         };
 
                         return nextMessages;

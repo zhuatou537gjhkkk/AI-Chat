@@ -150,7 +150,7 @@ const bochaSearchTool = new DynamicTool({
                     return { startMs: now - 365 * oneDayMs, endMs: now, label: "最近一年" };
                 }
 
-                const unitMatch = q.match(/(?:最近|近|过去)?\s*(\d+|[一二两三四五六七八九十]+)\s*(分钟|小时|天|周|个月|月|年)内?/);
+                const unitMatch = q.match(/(?:最近|近|过去)\s*(\d+|[一二两三四五六七八九十]+)\s*(分钟|小时|天|周|个月|月|年)内?/);
                 if (unitMatch) {
                     const value = toNumber(unitMatch[1]);
                     const unit = unitMatch[2];
@@ -210,7 +210,31 @@ const bochaSearchTool = new DynamicTool({
             const relativeRange = parseRelativeWindow(queryStr);
             const timeWindow = explicitRange || relativeRange;
             const hasTimeWindow = Boolean(timeWindow);
-            const freshness = hasTimeWindow && timeWindow.endMs - timeWindow.startMs <= oneDayMs ? "day" : "no-limit";
+            let freshness = "noLimit";
+            if (explicitRange) {
+                // Handle absolute date ranges (e.g. 2024-03-01 to 2024-03-10)
+                const startStr = formatDate(explicitRange.startMs);
+                const endStr = formatDate(explicitRange.endMs);
+                freshness = startStr === endStr ? startStr : `${startStr}..${endStr}`;
+            } else if (relativeRange) {
+                // Handle relative windows (e.g. last week, today)
+                const duration = relativeRange.endMs - relativeRange.startMs;
+
+                // For pure past windows (e.g. yesterday), use explicit date range format.
+                if (relativeRange.endMs < now - 1000) {
+                    const startStr = formatDate(relativeRange.startMs);
+                    const endStr = formatDate(relativeRange.endMs);
+                    freshness = startStr === endStr ? startStr : `${startStr}..${endStr}`;
+                } else if (duration <= oneDayMs) {
+                    freshness = "oneDay";
+                } else if (duration <= 7 * oneDayMs) {
+                    freshness = "oneWeek";
+                } else if (duration <= 31 * oneDayMs) {
+                    freshness = "oneMonth";
+                } else if (duration <= 366 * oneDayMs) {
+                    freshness = "oneYear";
+                }
+            }
 
             const stripTemporalWords = (text) =>
                 String(text || "")
@@ -280,7 +304,7 @@ const bochaSearchTool = new DynamicTool({
                         signal: controller.signal
                     });
 
-                    if (!response.ok && preferredFreshness === "day") {
+                    if (!response.ok && preferredFreshness === "oneDay") {
                         response = await fetch("https://api.bochaai.com/v1/web-search", {
                             method: "POST",
                             headers: {
@@ -290,7 +314,7 @@ const bochaSearchTool = new DynamicTool({
                             body: JSON.stringify({
                                 query,
                                 count: 10,
-                                freshness: "no-limit"
+                                freshness: "noLimit"
                             }),
                             signal: controller.signal
                         });

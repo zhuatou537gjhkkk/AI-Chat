@@ -67,7 +67,7 @@ export async function fetchMessagesBySession(id) {
     return data?.messages || [];
 }
 
-export async function fetchChatStream(sessionId, message, onChunk, onDone, onError, options = {}) {
+export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, onDone, onError, options = {}) {
     const { signal } = options;
 
     try {
@@ -123,10 +123,19 @@ export async function fetchChatStream(sessionId, message, onChunk, onDone, onErr
 
                     try {
                         const parsed = JSON.parse(payload);
-                        const text = parsed && typeof parsed.text === 'string' ? parsed.text : '';
+                        const eventType = parsed?.type;
 
-                        if (text) {
-                            onChunk(text);
+                        if (!eventType || eventType === 'text') {
+                            const text = parsed && typeof parsed.text === 'string' ? parsed.text : '';
+
+                            if (text) {
+                                onChunk(text);
+                            }
+                            continue;
+                        }
+
+                        if (eventType === 'tool_start' || eventType === 'tool_end') {
+                            onToolEvent(parsed);
                         }
                     } catch (parseError) {
                         // Ignore malformed chunk and continue streaming.

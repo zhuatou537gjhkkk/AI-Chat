@@ -185,9 +185,25 @@ function CodeRenderer({ inline, className, children, ...props }) {
 
 function MessageItem({ message }) {
     const isUser = message.role === 'user';
-    const isAssistantThinking = message.role === 'assistant' && message.content === '';
+    const toolLogs = Array.isArray(message.toolLogs) ? message.toolLogs : [];
     const structuredSearchResult =
         message.role === 'assistant' ? parseStructuredWebSearchContent(message.content) : null;
+
+    const renderToolLogs = () => {
+        if (toolLogs.length === 0) {
+            return null;
+        }
+
+        return (
+            <div className="mb-2 rounded-md bg-gray-800 p-2 font-mono text-xs text-green-400">
+                {toolLogs.map((log, index) => (
+                    <div key={`${log.name}-${index}`} className="whitespace-pre-wrap break-words">
+                        {`> 执行工具: ${log.name} ... ${log.status === 'running' ? '⏳' : '✅'}`}
+                    </div>
+                ))}
+            </div>
+        );
+    };
 
     const renderStructuredSearchCards = () => {
         if (!structuredSearchResult) {
@@ -251,15 +267,6 @@ function MessageItem({ message }) {
     };
 
     const renderAssistantContent = () => {
-        if (isAssistantThinking) {
-            return (
-                <div className="flex items-center gap-2 text-slate-600">
-                    <span className="h-2.5 w-2.5 rounded-full bg-sky-500 animate-pulse" />
-                    <span className="animate-pulse">🧠 Agent 正在思考与检索...</span>
-                </div>
-            );
-        }
-
         if (structuredSearchResult) {
             return renderStructuredSearchCards();
         }
@@ -317,6 +324,7 @@ function MessageItem({ message }) {
                     <p className="whitespace-pre-wrap break-words">{message.content}</p>
                 ) : (
                     <div className="break-words [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-6">
+                        {renderToolLogs()}
                         {renderAssistantContent()}
                     </div>
                 )}
@@ -327,8 +335,15 @@ function MessageItem({ message }) {
 
 export default memo(
     MessageItem,
-    (prevProps, nextProps) =>
-        prevProps.message?.id === nextProps.message?.id &&
-        prevProps.message?.role === nextProps.message?.role &&
-        prevProps.message?.content === nextProps.message?.content
+    (prevProps, nextProps) => {
+        const prevLogs = prevProps.message?.toolLogs || [];
+        const nextLogs = nextProps.message?.toolLogs || [];
+
+        return (
+            prevProps.message?.id === nextProps.message?.id &&
+            prevProps.message?.role === nextProps.message?.role &&
+            prevProps.message?.content === nextProps.message?.content &&
+            JSON.stringify(prevLogs) === JSON.stringify(nextLogs)
+        );
+    }
 );
