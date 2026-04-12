@@ -12,7 +12,12 @@ import {
     removeSession
 } from "./db/index.js";
 import { chatWithStream } from "./services/chat.js";
-import { uploadMiddleware, processAndStoreDocument, retrieveKnowledgeEvidence } from "./rag/index.js";
+import {
+    uploadMiddleware,
+    processAndStoreDocument,
+    retrieveKnowledgeEvidence,
+    getLatestUploadedSource
+} from "./rag/index.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -30,52 +35,17 @@ function isDbCountIntent(input) {
 function isKnowledgeIntent(input) {
     const text = String(input || "");
     const hasDocCue = /文档|资料|文件|手册|说明书|知识库|上传|上文|文中|这份|该文|来源|证据|摘录/.test(text);
-    const hasFileRef = /\b[\w.-]+\.(txt|md|pdf|doc|docx)\b/i.test(text);
+    const hasFileRef = /\b[\w.-]+\.(txt|md)\b/i.test(text);
     return hasDocCue || hasFileRef;
+}
+
+function refersToLatestUpload(input) {
+    const text = String(input || "");
+    return /我上传的这个|刚上传|这个文件|这份文件|当前上传/.test(text);
 }
 
 function sendSseText(res, text) {
     res.write(`data: ${JSON.stringify({ text })}\n\n`);
-}
-
-function sanitizeSnippet(text) {
-    return String(text || "")
-        .replace(/\s+/g, " ")
-        .trim();
-}
-
-function buildEvidenceSummary(items) {
-    const snippets = items
-        .map((item) => sanitizeSnippet(item.content))
-        .filter(Boolean);
-
-    if (snippets.length === 0) {
-        return "根据当前检索结果，暂时无法提炼出明确结论。";
-    }
-
-    const merged = snippets.join("；");
-    const sentencePieces = merged
-        .split(/[。！？!?；;]+/)
-        .map((part) => part.trim())
-        .filter(Boolean);
-
-    const keyPoints = sentencePieces.slice(0, 2);
-
-    if (keyPoints.length === 0) {
-        return `根据检索到的文档内容，核心信息是：${merged.slice(0, 120)}${merged.length > 120 ? "..." : ""}`;
-    }
-
-    return `根据检索到的文档内容，结论如下：${keyPoints.join("；")}。`;
-}
-
-function formatEvidenceAnswer(items) {
-    const summary = buildEvidenceSummary(items);
-    const lines = items.map((item, index) => {
-        const score = Number(item.score).toFixed(4);
-        return `${index + 1}. 来源：${item.source}（score=${score}）\n摘录：${item.content}`;
-    });
-
-    return `${summary}\n\n证据引用：\n${lines.join("\n\n")}`;
 }
 
 app.get("/ping", (req, res) => {
@@ -216,9 +186,14 @@ app.post("/upload", uploadMiddleware, async (req, res) => {
             data: result
         });
     } catch (error) {
-        return res.status(500).json({
+        const message = error.message || "upload failed";
+        const statusCode = /仅支持上传|file type|invalid file/i.test(message)
+            ? 400
+            : 500;
+
+        return res.status(statusCode).json({
             ok: false,
-            message: error.message || "upload failed"
+            message
         });
     }
 });
@@ -259,15 +234,30 @@ app.post("/chat", async (req, res) => {
     }
 
     if (isKnowledgeIntent(message)) {
-        const evidence = await retrieveKnowledgeEvidence(message);
+        const preferredSource = refersToLatestUpload(message)
+            ? getLatestUploadedSource()
+            : "";
+        const evidence = await retrieveKnowledgeEvidence(message, {
+            topK: 12,
+            returnK: 6,
+            preferredSource
+        });
         saveMessage(sessionId, "user", message);
 
         if (evidence.status === "ok") {
-            const answer = formatEvidenceAnswer(evidence.items);
-            saveMessage(sessionId, "assistant", answer);
-            sendSseText(res, answer);
-            res.write("data: [DONE]\n\n");
-            res.end();
+            const context = evidence.items
+                .map((item) => String(item?.content || "").trim())
+                .filter(Boolean)
+                .join("\n\n");
+
+            const enhancedPrompt = `你是一个智能助手。请严格根据以下检索到的参考资料，回答用户的问题。如果资料不包含相关答案，请告知用户。\n\n参考资料：\n${context}\n\n用户问题：${message}`;
+
+            await chatWithStream(sessionId, enhancedPrompt, res, {
+                enableWebSearch: false,
+                systemPrompt,
+                temperature,
+                skipUserMessageSave: true
+            });
             return;
         }
 

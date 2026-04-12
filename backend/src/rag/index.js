@@ -1,10 +1,12 @@
 import fs from "fs";
 import multer from "multer";
+import path from "path";
 import { OpenAIEmbeddings } from "@langchain/openai";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { FaissStore } from "@langchain/community/vectorstores/faiss";
 
 let vectorStore = null;
+let latestUploadedSource = null;
 const knowledgeChunks = [];
 const knowledgeMetadatas = [];
 const indexedFiles = new Set();
@@ -13,14 +15,38 @@ const DEFAULT_RETURN_K = 3;
 const DEFAULT_MAX_SCORE = Number(
     process.env.RAG_MAX_SCORE ?? Number.POSITIVE_INFINITY
 );
+const DEFAULT_EMBED_BATCH_SIZE = 25;
+const MAX_EMBED_BATCH_SIZE = 25;
+const EMBED_BATCH_SIZE = Math.min(
+    Number(process.env.RAG_EMBED_BATCH_SIZE) || DEFAULT_EMBED_BATCH_SIZE,
+    MAX_EMBED_BATCH_SIZE
+);
+const SUPPORTED_FILE_EXTENSIONS = new Set([".txt", ".md"]);
+
+function getFileExtension(fileName) {
+    return path.extname(String(fileName || "")).toLowerCase();
+}
+
+export function isSupportedKnowledgeFileName(fileName) {
+    return SUPPORTED_FILE_EXTENSIONS.has(getFileExtension(fileName));
+}
 
 const upload = multer({
-    storage: multer.memoryStorage()
+    storage: multer.memoryStorage(),
+    fileFilter: (req, file, cb) => {
+        if (isSupportedKnowledgeFileName(file?.originalname)) {
+            cb(null, true);
+            return;
+        }
+
+        cb(new Error("仅支持上传 .txt 或 .md 文件"));
+    }
 });
 
 const embeddings = new OpenAIEmbeddings({
     modelName: process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-v1",
     model: process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-v1",
+    batchSize: EMBED_BATCH_SIZE,
     configuration: {
         apiKey: process.env.OPENAI_API_KEY || process.env.DASHSCOPE_API_KEY,
         baseURL: process.env.OPENAI_BASE_URL || process.env.DASHSCOPE_BASE_URL
@@ -29,9 +55,17 @@ const embeddings = new OpenAIEmbeddings({
 
 export const uploadMiddleware = upload.single("file");
 
+export function getLatestUploadedSource() {
+    return latestUploadedSource;
+}
+
 export async function processAndStoreDocument(fileBuffer, fileName) {
     if (!fileBuffer || !Buffer.isBuffer(fileBuffer)) {
         throw new Error("invalid file buffer");
+    }
+
+    if (!isSupportedKnowledgeFileName(fileName)) {
+        throw new Error("仅支持上传 .txt 或 .md 文件");
     }
 
     const text = fileBuffer.toString("utf-8").trim();
@@ -60,13 +94,22 @@ export async function processAndStoreDocument(fileBuffer, fileName) {
     knowledgeChunks.push(...chunks);
     knowledgeMetadatas.push(...metadata);
     indexedFiles.add(fileName);
+    latestUploadedSource = fileName;
 
-    // Rebuild the FAISS index from all accumulated chunks so uploads are incremental.
-    vectorStore = await FaissStore.fromTexts(
-        knowledgeChunks,
-        knowledgeMetadatas,
-        embeddings
-    );
+    const documents = chunks.map((chunk, index) => ({
+        pageContent: chunk,
+        metadata: metadata[index]
+    }));
+
+    if (!vectorStore) {
+        vectorStore = await FaissStore.fromTexts(
+            chunks,
+            metadata,
+            embeddings
+        );
+    } else {
+        await vectorStore.addDocuments(documents);
+    }
 
     return {
         fileName,
@@ -107,15 +150,19 @@ export async function retrieveKnowledgeEvidence(
     const topK = options.topK ?? DEFAULT_TOP_K;
     const returnK = options.returnK ?? DEFAULT_RETURN_K;
     const maxScore = options.maxScore ?? DEFAULT_MAX_SCORE;
-    const docsWithScore = await vectorStore.similaritySearchWithScore(query, topK);
+    const preferredSource = String(options.preferredSource || "").trim();
+    const searchTopK = preferredSource
+        ? Math.max(topK, DEFAULT_TOP_K * 4)
+        : topK;
+    const docsWithScore = await vectorStore.similaritySearchWithScore(query, searchTopK);
 
     const scorePreview = docsWithScore
         .map(([, score]) => Number(score))
         .filter((score) => Number.isFinite(score))
-        .slice(0, topK)
+        .slice(0, searchTopK)
         .map((score) => score.toFixed(4));
     console.log(
-        `[rag][scores] query=${JSON.stringify(query)} top=${scorePreview.join(", ")} maxScore=${maxScore}`
+        `[rag][scores] query=${JSON.stringify(query)} top=${scorePreview.join(", ")} maxScore=${maxScore} preferredSource=${preferredSource || "none"}`
     );
 
     const normalized = docsWithScore
@@ -127,11 +174,18 @@ export async function retrieveKnowledgeEvidence(
         .filter((item) => item.content && Number.isFinite(item.score))
         .sort((a, b) => a.score - b.score);
 
+    const preferredItems = preferredSource
+        ? normalized.filter((item) => item.source === preferredSource)
+        : normalized;
+    const candidateItems = preferredItems.length > 0
+        ? preferredItems
+        : normalized;
+
     const filtered = Number.isFinite(maxScore)
-        ? normalized
+        ? candidateItems
             .filter((item) => item.score <= maxScore)
             .slice(0, returnK)
-        : normalized.slice(0, returnK);
+        : candidateItems.slice(0, returnK);
 
     if (filtered.length === 0) {
         return {

@@ -169,10 +169,16 @@ async function streamDirectChat({
 }
 
 export async function chatWithStream(session_id, userMessage, res, options = {}) {
-    const { enableWebSearch = true } = options;
+    const {
+        enableWebSearch = true,
+        skipUserMessageSave = false,
+        userMessageForStorage
+    } = options;
     const temperature = normalizeTemperature(options.temperature);
     const systemPrompt = resolveSystemPrompt(options.systemPrompt);
-    saveMessage(session_id, "user", userMessage);
+    if (!skipUserMessageSave) {
+        saveMessage(session_id, "user", userMessageForStorage ?? userMessage);
+    }
 
     const history = getHistoryMessages(session_id, 10);
     const formattedHistory = history.map(toLangChainMessage);
