@@ -48,6 +48,7 @@ export const useChatStore = create((set, get) => ({
     activeAbortController: null,
     activeStreamToken: null,
     lastFailedUserMessage: '',
+    lastFailedRequest: null,
     messages: [initialMessage],
     isTyping: false,
     initSessions: async () => {
@@ -278,14 +279,17 @@ export const useChatStore = create((set, get) => ({
         }
     },
     retryLastFailedMessage: async () => {
-        const message = get().lastFailedUserMessage;
-        if (!message || get().isTyping) {
+        const failedRequest = get().lastFailedRequest;
+        if (!failedRequest?.content || get().isTyping) {
             return;
         }
 
-        await get().sendMessage(message);
+        await get().sendMessage(failedRequest.content, {
+            enableWebSearch: failedRequest.enableWebSearch,
+        });
     },
-    sendMessage: async (content) => {
+    sendMessage: async (content, options = {}) => {
+        const { enableWebSearch = true } = options;
         const state = useChatStore.getState();
         const sessionId = state.currentSessionId;
 
@@ -448,6 +452,7 @@ export const useChatStore = create((set, get) => ({
                     activeAbortController: null,
                     activeStreamToken: null,
                     lastFailedUserMessage: '',
+                    lastFailedRequest: null,
                 });
             },
             (error) => {
@@ -481,9 +486,18 @@ export const useChatStore = create((set, get) => ({
                     activeAbortController: null,
                     activeStreamToken: null,
                     lastFailedUserMessage: isAbort ? '' : content,
+                    lastFailedRequest: isAbort
+                        ? null
+                        : {
+                            content,
+                            enableWebSearch,
+                        },
                 }));
             },
-            { signal: controller.signal }
+            {
+                signal: controller.signal,
+                enableWebSearch,
+            }
         );
     },
 }));

@@ -68,7 +68,7 @@ export async function fetchMessagesBySession(id) {
 }
 
 export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, onDone, onError, options = {}) {
-    const { signal } = options;
+    const { signal, enableWebSearch = true } = options;
 
     try {
         const response = await fetch(`${BASE_URL}/chat`, {
@@ -80,6 +80,7 @@ export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, 
             body: JSON.stringify({
                 session_id: sessionId,
                 message,
+                enable_web_search: enableWebSearch,
             }),
         });
 
