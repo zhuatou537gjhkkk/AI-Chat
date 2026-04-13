@@ -83,6 +83,7 @@ export const useChatStore = create(persist((set, get) => ({
     lastFailedRequest: null,
     messages: [initialMessage],
     isTyping: false,
+    selectedImage: null,
     enableWebSearch: false,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     temperature: DEFAULT_TEMPERATURE,
@@ -96,6 +97,12 @@ export const useChatStore = create(persist((set, get) => ({
 
             return { enableWebSearch: Boolean(nextValue) };
         });
+    },
+    setSelectedImage: (payload) => {
+        set({ selectedImage: payload || null });
+    },
+    clearSelectedImage: () => {
+        set({ selectedImage: null });
     },
     setSystemPrompt: (prompt) => {
         const nextPrompt = String(prompt ?? '');
@@ -511,6 +518,7 @@ export const useChatStore = create(persist((set, get) => ({
 
         await get().sendMessage(failedRequest.content, {
             enableWebSearch: get().enableWebSearch,
+            imageId: failedRequest.imageId || null,
         });
     },
     retryMessageById: async (messageId) => {
@@ -546,6 +554,8 @@ export const useChatStore = create(persist((set, get) => ({
         const enableWebSearch = Boolean(effectiveEnableWebSearch);
         const state = useChatStore.getState();
         const sessionId = state.currentSessionId;
+        const selectedImage = state.selectedImage;
+        const selectedImageId = options.imageId ?? selectedImage?.imageId ?? null;
 
         const sessionSpecificSettings = sessionId
             ? state.sessionAgentSettings[sessionId]
@@ -624,6 +634,7 @@ export const useChatStore = create(persist((set, get) => ({
         set({
             activeAbortController: controller,
             activeStreamToken: streamToken,
+            selectedImage: null,
         });
 
         await fetchChatStream(
@@ -766,6 +777,7 @@ export const useChatStore = create(persist((set, get) => ({
                         : {
                             content,
                             enableWebSearch,
+                            imageId: selectedImageId,
                         },
                 }));
             },
@@ -774,6 +786,7 @@ export const useChatStore = create(persist((set, get) => ({
                 enableWebSearch,
                 systemPrompt,
                 temperature,
+                imageId: selectedImageId,
             }
         );
     },

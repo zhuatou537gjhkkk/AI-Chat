@@ -10,6 +10,15 @@ const FORCED_WEB_SEARCH_MAX_CHARS = 8000;
 const DEFAULT_SYSTEM_PROMPT = "你是一个有用的 AI 助手。";
 const DEFAULT_TEMPERATURE = 0.7;
 
+function resolveModelName(hasImage = false) {
+    if (hasImage) {
+        // 视觉模式建议将环境变量切换为支持多模态的模型，如 qwen-vl-max 或 qwen-vl-plus。
+        return process.env.QWEN_VISION_MODEL || process.env.OPENAI_MODEL || "qwen-vl-plus";
+    }
+
+    return process.env.QWEN_MODEL || process.env.OPENAI_MODEL || "qwen-turbo";
+}
+
 function emitThought(res, text, status = "running") {
     res.write(
         `data: ${JSON.stringify({
@@ -125,7 +134,7 @@ async function getAgentExecutor(enableWebSearch, temperature, systemPrompt) {
         : agentTools.filter((tool) => tool.name !== WEB_SEARCH_TOOL_NAME);
 
     const llm = new ChatOpenAI({
-        modelName: "qwen-turbo",
+        modelName: resolveModelName(false),
         temperature,
         streaming: true
     });
@@ -144,15 +153,30 @@ async function getAgentExecutor(enableWebSearch, temperature, systemPrompt) {
     });
 }
 
+function buildHumanInputMessage(userMessage, image) {
+    if (image) {
+        return new HumanMessage({
+            content: [
+                { type: "text", text: userMessage || "请描述这张图片。" },
+                { type: "image_url", image_url: { url: image } }
+            ]
+        });
+    }
+
+    return new HumanMessage(userMessage);
+}
+
 async function streamDirectChat({
     userMessage,
+    image,
     formattedHistory,
     res,
     systemInstruction,
     temperature
 }) {
+    const hasImage = Boolean(image);
     const llm = new ChatOpenAI({
-        modelName: "qwen-turbo",
+        modelName: resolveModelName(hasImage),
         temperature,
         streaming: true
     });
@@ -160,7 +184,7 @@ async function streamDirectChat({
     const messages = [
         new SystemMessage(systemInstruction),
         ...formattedHistory,
-        new HumanMessage(userMessage)
+        buildHumanInputMessage(userMessage, image)
     ];
 
     let fullText = "";
@@ -179,16 +203,19 @@ async function streamDirectChat({
     return fullText;
 }
 
-export async function chatWithStream(session_id, userMessage, res, options = {}) {
+export async function chatWithStream(session_id, userMessage, image, systemPromptInput, temperatureInput, res, options = {}) {
     const {
         enableWebSearch = false,
         skipUserMessageSave = false,
         userMessageForStorage
     } = options;
-    const temperature = normalizeTemperature(options.temperature);
-    const systemPrompt = resolveSystemPrompt(options.systemPrompt);
+    const normalizedUserMessage = String(userMessage || "");
+    const temperature = normalizeTemperature(temperatureInput);
+    const systemPrompt = resolveSystemPrompt(systemPromptInput);
+    const hasImage = Boolean(image);
+
     if (!skipUserMessageSave) {
-        saveMessage(session_id, "user", userMessageForStorage ?? userMessage);
+        saveMessage(session_id, "user", userMessageForStorage ?? normalizedUserMessage);
     }
 
     const history = getHistoryMessages(session_id, 10);
@@ -199,24 +226,25 @@ export async function chatWithStream(session_id, userMessage, res, options = {})
         const lastHistoryMessage = history[history.length - 1];
         if (
             lastHistoryMessage.role === "user" &&
-            lastHistoryMessage.content === userMessage
+            lastHistoryMessage.content === normalizedUserMessage
         ) {
             formattedHistory.pop();
         }
     }
 
     let fullText = "";
-    let inputForAgent = userMessage;
-    const shouldBypassTools = isCreativeTask(userMessage, systemPrompt);
+    let inputForAgent = normalizedUserMessage;
+    const shouldBypassTools = isCreativeTask(normalizedUserMessage, systemPrompt) || hasImage;
 
     try {
         emitThought(res, "正在分析你的问题");
 
         if (shouldBypassTools) {
-            emitThought(res, "识别为直接回答任务，准备生成结果");
+            emitThought(res, hasImage ? "识别到图片输入，切换视觉理解模式" : "识别为直接回答任务，准备生成结果");
             const directSystemInstruction = buildDirectAnswerSystemInstruction(enableWebSearch, systemPrompt);
             fullText = await streamDirectChat({
-                userMessage,
+                userMessage: normalizedUserMessage,
+                image,
                 formattedHistory,
                 res,
                 systemInstruction: directSystemInstruction,
@@ -237,20 +265,20 @@ export async function chatWithStream(session_id, userMessage, res, options = {})
             if (webSearchTool) {
                 const startedAt = new Date().toISOString();
                 console.log(
-                    `[agent][tool_start][forced] at=${startedAt} name=${WEB_SEARCH_TOOL_NAME} input=${JSON.stringify(userMessage)}`
+                    `[agent][tool_start][forced] at=${startedAt} name=${WEB_SEARCH_TOOL_NAME} input=${JSON.stringify(normalizedUserMessage)}`
                 );
                 res.write(
                     `data: ${JSON.stringify({
                         type: "tool_start",
                         toolName: WEB_SEARCH_TOOL_NAME,
-                        input: userMessage
+                        input: normalizedUserMessage
                     })}\n\n`
                 );
 
                 let forcedSearchOutput = "";
 
                 try {
-                    const toolResult = await webSearchTool.invoke(userMessage);
+                    const toolResult = await webSearchTool.invoke(normalizedUserMessage);
                     forcedSearchOutput = normalizeChunkContent(toolResult).slice(0, FORCED_WEB_SEARCH_MAX_CHARS);
                 } catch (forcedSearchError) {
                     forcedSearchOutput = `强制联网检索失败: ${forcedSearchError?.message || "unknown error"}`;
@@ -268,7 +296,7 @@ export async function chatWithStream(session_id, userMessage, res, options = {})
                 );
 
                 if (forcedSearchOutput) {
-                    inputForAgent = `${userMessage}\n\n[系统提示] 已按“联网:开”强制执行一次 web_search，请优先基于以下检索结果回答；如证据不足可再调用 web_search 补充。\n${forcedSearchOutput}`;
+                    inputForAgent = `${normalizedUserMessage}\n\n[系统提示] 已按“联网:开”强制执行一次 web_search，请优先基于以下检索结果回答；如证据不足可再调用 web_search 补充。\n${forcedSearchOutput}`;
                     emitThought(res, "已获取联网结果，正在组织回答");
                 }
             }

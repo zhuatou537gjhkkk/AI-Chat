@@ -89,6 +89,8 @@ export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, 
         enableWebSearch = false,
         systemPrompt = '你是一个有用的 AI 助手。',
         temperature = 0.7,
+        image = null,
+        imageId = null,
     } = options;
 
     try {
@@ -101,6 +103,8 @@ export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, 
             body: JSON.stringify({
                 session_id: sessionId,
                 message,
+                image,
+                image_id: imageId,
                 enable_web_search: enableWebSearch,
                 systemPrompt,
                 temperature,
@@ -108,7 +112,22 @@ export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, 
         });
 
         if (!response.ok) {
-            throw new Error(`Request failed with status ${response.status}`);
+            let message = `Request failed with status ${response.status}`;
+
+            try {
+                const data = await response.json();
+                if (data?.message) {
+                    message = data.message;
+                } else if (data?.error) {
+                    message = data.error;
+                }
+            } catch (error) {
+                if (response.status === 413) {
+                    message = '图片过大，请压缩后重试。';
+                }
+            }
+
+            throw new Error(message);
         }
 
         if (!response.body) {
@@ -187,6 +206,31 @@ export async function uploadFile(file) {
         try {
             const data = await response.json();
             message = data?.message || message;
+        } catch (error) {
+            // Ignore JSON parsing errors and throw default message.
+        }
+
+        throw new Error(message);
+    }
+
+    return response.json();
+}
+
+export async function uploadImage(file) {
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const response = await fetch(`${BASE_URL}/upload-image`, {
+        method: 'POST',
+        body: formData,
+    });
+
+    if (!response.ok) {
+        let message = 'Image upload failed';
+
+        try {
+            const data = await response.json();
+            message = data?.message || data?.error || message;
         } catch (error) {
             // Ignore JSON parsing errors and throw default message.
         }

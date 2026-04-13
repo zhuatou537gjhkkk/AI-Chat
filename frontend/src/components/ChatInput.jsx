@@ -1,15 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { useChatStore } from '../store/chatStore';
-import { uploadFile } from '../api/chat';
+import { uploadFile, uploadImage } from '../api/chat';
+
+const MAX_IMAGE_UPLOAD_BYTES = 8 * 1024 * 1024;
 
 export default function ChatInput() {
     const [value, setValue] = useState('');
     const [uploadStatus, setUploadStatus] = useState('');
+    const [isListening, setIsListening] = useState(false);
     const textareaRef = useRef(null);
-    const fileInputRef = useRef(null);
+    const docFileInputRef = useRef(null);
+    const imageFileInputRef = useRef(null);
+    const recognitionRef = useRef(null);
+    const previewUrlRef = useRef(null);
     const sendMessage = useChatStore((state) => state.sendMessage);
     const enableWebSearch = useChatStore((state) => state.enableWebSearch);
     const setEnableWebSearch = useChatStore((state) => state.setEnableWebSearch);
+    const selectedImage = useChatStore((state) => state.selectedImage);
+    const setSelectedImage = useChatStore((state) => state.setSelectedImage);
+    const clearSelectedImage = useChatStore((state) => state.clearSelectedImage);
     const isTyping = useChatStore((state) => state.isTyping);
     const stopMessageStream = useChatStore((state) => state.stopMessageStream);
     const retryLastFailedMessage = useChatStore((state) => state.retryLastFailedMessage);
@@ -40,15 +49,37 @@ export default function ChatInput() {
         };
     }, [uploadStatus]);
 
+    useEffect(() => {
+        const currentPreviewUrl = selectedImage?.previewUrl || null;
+
+        if (previewUrlRef.current && previewUrlRef.current !== currentPreviewUrl) {
+            URL.revokeObjectURL(previewUrlRef.current);
+        }
+
+        previewUrlRef.current = currentPreviewUrl;
+    }, [selectedImage]);
+
+    useEffect(() => () => {
+        if (recognitionRef.current) {
+            recognitionRef.current.stop();
+        }
+
+        const previewUrl = previewUrlRef.current;
+        if (previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+        }
+    }, []);
+
     const handleSend = async () => {
         const text = value.trim();
+        const hasImage = Boolean(selectedImage?.imageId);
 
-        if (!text || isTyping) {
+        if ((!text && !hasImage) || isTyping) {
             return;
         }
 
         setValue('');
-        await sendMessage(text, { enableWebSearch });
+        await sendMessage(text || '请帮我描述这张图片。', { enableWebSearch });
     };
 
     const handleKeyDown = async (event) => {
@@ -59,7 +90,11 @@ export default function ChatInput() {
     };
 
     const handleUploadClick = () => {
-        fileInputRef.current?.click();
+        docFileInputRef.current?.click();
+    };
+
+    const handleImageUploadClick = () => {
+        imageFileInputRef.current?.click();
     };
 
     const handleFileChange = async (event) => {
@@ -78,6 +113,112 @@ export default function ChatInput() {
         } finally {
             event.target.value = '';
         }
+    };
+
+    const handleClearImage = () => {
+        const previewUrl = selectedImage?.previewUrl;
+        if (previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+        }
+
+        previewUrlRef.current = null;
+
+        clearSelectedImage();
+    };
+
+    const handleImageChange = async (event) => {
+        const [file] = event.target.files || [];
+
+        if (!file) {
+            return;
+        }
+
+        try {
+            if (!String(file.type || '').startsWith('image/')) {
+                setUploadStatus('请选择图片文件。');
+                return;
+            }
+
+            if (file.size > MAX_IMAGE_UPLOAD_BYTES) {
+                setUploadStatus('图片过大，请选择 8MB 以内的图片。');
+                return;
+            }
+
+            setUploadStatus('正在上传图片...');
+            const previousPreviewUrl = selectedImage?.previewUrl;
+            if (previousPreviewUrl) {
+                URL.revokeObjectURL(previousPreviewUrl);
+            }
+
+            const uploaded = await uploadImage(file);
+            const imageId = uploaded?.id;
+
+            if (!imageId) {
+                setUploadStatus('图片上传失败，请重试。');
+                return;
+            }
+
+            const previewUrl = URL.createObjectURL(file);
+            previewUrlRef.current = previewUrl;
+            setSelectedImage({
+                imageId,
+                previewUrl,
+                fileName: file.name,
+            });
+            setUploadStatus(`已选择图片: ${file.name}`);
+        } catch (error) {
+            setUploadStatus(`图片处理失败: ${error.message || '请重试'}`);
+        } finally {
+            event.target.value = '';
+        }
+    };
+
+    const handleVoiceInput = () => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        if (!SpeechRecognition) {
+            setUploadStatus('当前浏览器不支持原生语音识别。');
+            return;
+        }
+
+        if (isListening && recognitionRef.current) {
+            recognitionRef.current.stop();
+            return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'zh-CN';
+        recognition.continuous = false;
+        recognition.interimResults = false;
+
+        recognition.onstart = () => {
+            setIsListening(true);
+        };
+
+        recognition.onresult = (event) => {
+            const transcript = Array.from(event.results || [])
+                .map((result) => result?.[0]?.transcript || '')
+                .join('')
+                .trim();
+
+            if (!transcript) {
+                return;
+            }
+
+            setValue((prev) => (prev ? `${prev}${transcript}` : transcript));
+        };
+
+        recognition.onerror = () => {
+            setUploadStatus('语音识别失败，请重试。');
+            setIsListening(false);
+        };
+
+        recognition.onend = () => {
+            setIsListening(false);
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
     };
 
     return (
@@ -113,6 +254,23 @@ export default function ChatInput() {
                     </div>
                 )}
 
+                {selectedImage && (
+                    <div className="mb-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                        <img
+                            src={selectedImage.previewUrl}
+                            alt="已选择图片"
+                            className="h-20 w-20 rounded-lg border border-slate-200 object-cover"
+                        />
+                        <button
+                            type="button"
+                            onClick={handleClearImage}
+                            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 transition hover:bg-slate-100"
+                        >
+                            X
+                        </button>
+                    </div>
+                )}
+
                 <div className="flex items-end gap-3">
                     <button
                         type="button"
@@ -123,12 +281,37 @@ export default function ChatInput() {
                         📁
                     </button>
                     <input
-                        ref={fileInputRef}
+                        ref={docFileInputRef}
                         type="file"
                         accept=".txt,.md"
                         className="hidden"
                         onChange={handleFileChange}
                     />
+
+                    <button
+                        type="button"
+                        onClick={handleImageUploadClick}
+                        className="h-11 w-11 shrink-0 rounded-xl border border-gray-300 bg-white text-base text-slate-700 transition hover:bg-slate-50"
+                        title="上传图片"
+                    >
+                        🖼️
+                    </button>
+                    <input
+                        ref={imageFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleImageChange}
+                    />
+
+                    <button
+                        type="button"
+                        onClick={handleVoiceInput}
+                        className={`h-11 w-11 shrink-0 rounded-xl border border-gray-300 bg-white text-base text-slate-700 transition hover:bg-slate-50 ${isListening ? 'animate-pulse text-red-500' : ''}`}
+                        title="语音输入"
+                    >
+                        🎤
+                    </button>
 
                     <textarea
                         ref={textareaRef}

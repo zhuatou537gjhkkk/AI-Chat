@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import multer from "multer";
 import {
     initDB,
     saveMessage,
@@ -19,12 +20,28 @@ import {
     retrieveKnowledgeEvidence,
     getLatestUploadedSource
 } from "./rag/index.js";
+import { saveUploadedImage, getUploadedImageDataUrl } from "./images/store.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const imageUploadMiddleware = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 8 * 1024 * 1024,
+    },
+    fileFilter: (req, file, cb) => {
+        if (!String(file.mimetype || "").startsWith("image/")) {
+            cb(new Error("仅支持图片上传"));
+            return;
+        }
+
+        cb(null, true);
+    },
+}).single("image");
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 initDB();
 
@@ -223,6 +240,40 @@ app.post("/upload", uploadMiddleware, async (req, res) => {
     }
 });
 
+app.post("/upload-image", (req, res) => {
+    imageUploadMiddleware(req, res, (error) => {
+        if (error) {
+            const message = error.message || "image upload failed";
+            const statusCode = /仅支持图片上传|file type|invalid file/i.test(message)
+                ? 400
+                : /File too large/i.test(message)
+                    ? 413
+                    : 500;
+
+            res.status(statusCode).json({
+                ok: false,
+                message,
+            });
+            return;
+        }
+
+        if (!req.file?.buffer) {
+            res.status(400).json({
+                ok: false,
+                message: "image is required",
+            });
+            return;
+        }
+
+        const id = saveUploadedImage(req.file.buffer, req.file.mimetype || "image/jpeg");
+
+        res.json({
+            ok: true,
+            id,
+        });
+    });
+});
+
 app.post("/chat", async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -231,16 +282,27 @@ app.post("/chat", async (req, res) => {
     const {
         session_id,
         message,
+        image,
+        image_id,
         enable_web_search,
         systemPrompt,
         temperature
     } = req.body || {};
     const sessionId = Number(session_id);
     const enableWebSearch = enable_web_search === true;
+    const resolvedImage = image || getUploadedImageDataUrl(image_id);
 
-    if (!Number.isInteger(sessionId) || sessionId <= 0 || !message) {
+    if (image_id && !resolvedImage) {
         res.write(
-            `data: ${JSON.stringify({ error: "session_id and message are required" })}\n\n`
+            `data: ${JSON.stringify({ error: "image_id is invalid or expired, please re-upload" })}\n\n`
+        );
+        res.end();
+        return;
+    }
+
+    if (!Number.isInteger(sessionId) || sessionId <= 0 || (!message && !resolvedImage)) {
+        res.write(
+            `data: ${JSON.stringify({ error: "session_id and message or image are required" })}\n\n`
         );
         res.end();
         return;
@@ -277,10 +339,8 @@ app.post("/chat", async (req, res) => {
 
             const enhancedPrompt = `你是一个智能助手。请严格根据以下检索到的参考资料，回答用户的问题。如果资料不包含相关答案，请告知用户。\n\n参考资料：\n${context}\n\n用户问题：${message}`;
 
-            await chatWithStream(sessionId, enhancedPrompt, res, {
+            await chatWithStream(sessionId, enhancedPrompt, resolvedImage, systemPrompt, temperature, res, {
                 enableWebSearch: false,
-                systemPrompt,
-                temperature,
                 skipUserMessageSave: true
             });
             return;
@@ -297,10 +357,8 @@ app.post("/chat", async (req, res) => {
         return;
     }
 
-    await chatWithStream(sessionId, message, res, {
+    await chatWithStream(sessionId, message, resolvedImage, systemPrompt, temperature, res, {
         enableWebSearch,
-        systemPrompt,
-        temperature
     });
 });
 
