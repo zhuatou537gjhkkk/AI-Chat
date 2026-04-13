@@ -296,6 +296,8 @@ export const useChatStore = create(persist((set, get) => ({
     speakingMessageId: null,
     themeMode: DEFAULT_THEME_MODE,
     isExporting: false,
+    sessionDrafts: {},
+    messageSearchKeyword: '',
     setEnableWebSearch: (enabled) => {
         set((state) => {
             const nextValue = typeof enabled === 'function'
@@ -397,6 +399,51 @@ export const useChatStore = create(persist((set, get) => ({
     setThemeMode: (mode) => {
         const nextMode = ['light', 'dark', 'system'].includes(mode) ? mode : DEFAULT_THEME_MODE;
         set({ themeMode: nextMode });
+    },
+    setMessageSearchKeyword: (keyword) => {
+        set({ messageSearchKeyword: String(keyword || '') });
+    },
+    getCurrentDraft: () => {
+        const state = get();
+        const sessionId = state.currentSessionId;
+
+        if (!sessionId) {
+            return '';
+        }
+
+        return String(state.sessionDrafts?.[sessionId] || '');
+    },
+    setCurrentDraft: (draft) => {
+        const content = String(draft || '');
+
+        set((state) => {
+            const sessionId = state.currentSessionId;
+            if (!sessionId) {
+                return {};
+            }
+
+            return {
+                sessionDrafts: {
+                    ...state.sessionDrafts,
+                    [sessionId]: content,
+                },
+            };
+        });
+    },
+    clearCurrentDraft: () => {
+        set((state) => {
+            const sessionId = state.currentSessionId;
+            if (!sessionId || !state.sessionDrafts?.[sessionId]) {
+                return {};
+            }
+
+            return {
+                sessionDrafts: {
+                    ...state.sessionDrafts,
+                    [sessionId]: '',
+                },
+            };
+        });
     },
     getResolvedTheme: () => resolveThemeValue(get().themeMode),
     exportCurrentSessionMarkdown: async () => {
@@ -514,6 +561,7 @@ export const useChatStore = create(persist((set, get) => ({
             activeSessionRequestId: requestId,
             isSessionLoading: true,
             isTyping: false,
+            messageSearchKeyword: '',
             sessionError: '',
         });
 
@@ -694,7 +742,10 @@ export const useChatStore = create(persist((set, get) => ({
 
                 const defaultSettings = createDefaultAgentSettings();
                 const nextSettingsMap = { ...state.sessionAgentSettings };
+                const nextDrafts = { ...state.sessionDrafts };
                 delete nextSettingsMap[id];
+                delete nextDrafts[id];
+                nextDrafts[newId] = '';
                 nextSettingsMap[newId] = defaultSettings;
 
                 set({
@@ -704,6 +755,7 @@ export const useChatStore = create(persist((set, get) => ({
                     systemPrompt: defaultSettings.systemPrompt,
                     temperature: defaultSettings.temperature,
                     sessionAgentSettings: nextSettingsMap,
+                    sessionDrafts: nextDrafts,
                     sessionError: '',
                 });
                 return;
@@ -714,13 +766,16 @@ export const useChatStore = create(persist((set, get) => ({
 
             set((state) => {
                 const nextSettingsMap = { ...state.sessionAgentSettings };
+                const nextDrafts = { ...state.sessionDrafts };
                 delete nextSettingsMap[id];
+                delete nextDrafts[id];
 
                 if (state.currentSessionId !== id) {
                     return {
                         sessions: sortSessions(remainingSessions),
                         currentSessionId: nextSessionId,
                         sessionAgentSettings: nextSettingsMap,
+                        sessionDrafts: nextDrafts,
                         sessionError: '',
                     };
                 }
@@ -739,6 +794,7 @@ export const useChatStore = create(persist((set, get) => ({
                     systemPrompt: activeSettings.systemPrompt,
                     temperature: normalizeTemperatureValue(activeSettings.temperature),
                     sessionAgentSettings: nextSettingsMap,
+                    sessionDrafts: nextDrafts,
                     sessionError: '',
                 };
             });
@@ -1059,6 +1115,7 @@ export const useChatStore = create(persist((set, get) => ({
     name: 'chat-agent-settings',
     partialize: (state) => ({
         sessionAgentSettings: state.sessionAgentSettings,
+        sessionDrafts: state.sessionDrafts,
         enableWebSearch: state.enableWebSearch,
         isVoiceEnabled: state.isVoiceEnabled,
         voiceRate: state.voiceRate,

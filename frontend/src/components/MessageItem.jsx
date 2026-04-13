@@ -1,6 +1,4 @@
 import { memo, useEffect, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { useChatStore } from '../store/chatStore';
 import { playVoice, stopVoice } from '../store/chatStore';
 
@@ -53,6 +51,9 @@ function parseStructuredWebSearchContent(content) {
 let syntaxHighlighterCache = null;
 let syntaxThemeCache = null;
 let syntaxLoaderPromise = null;
+let markdownRendererCache = null;
+let markdownPluginCache = null;
+let markdownLoaderPromise = null;
 
 async function loadSyntaxAssets() {
     if (syntaxHighlighterCache && syntaxThemeCache) {
@@ -64,9 +65,25 @@ async function loadSyntaxAssets() {
 
     if (!syntaxLoaderPromise) {
         syntaxLoaderPromise = Promise.all([
-            import('react-syntax-highlighter').then((mod) => mod.Prism),
+            import('react-syntax-highlighter/dist/esm/prism-light').then((mod) => mod.default),
             import('react-syntax-highlighter/dist/esm/styles/prism').then((mod) => mod.oneDark),
-        ]).then(([SyntaxHighlighter, theme]) => {
+            import('react-syntax-highlighter/dist/esm/languages/prism/javascript').then((mod) => ['javascript', mod.default]),
+            import('react-syntax-highlighter/dist/esm/languages/prism/jsx').then((mod) => ['jsx', mod.default]),
+            import('react-syntax-highlighter/dist/esm/languages/prism/typescript').then((mod) => ['typescript', mod.default]),
+            import('react-syntax-highlighter/dist/esm/languages/prism/tsx').then((mod) => ['tsx', mod.default]),
+            import('react-syntax-highlighter/dist/esm/languages/prism/json').then((mod) => ['json', mod.default]),
+            import('react-syntax-highlighter/dist/esm/languages/prism/bash').then((mod) => ['bash', mod.default]),
+            import('react-syntax-highlighter/dist/esm/languages/prism/python').then((mod) => ['python', mod.default]),
+            import('react-syntax-highlighter/dist/esm/languages/prism/java').then((mod) => ['java', mod.default]),
+            import('react-syntax-highlighter/dist/esm/languages/prism/css').then((mod) => ['css', mod.default]),
+            import('react-syntax-highlighter/dist/esm/languages/prism/markdown').then((mod) => ['markdown', mod.default]),
+            import('react-syntax-highlighter/dist/esm/languages/prism/sql').then((mod) => ['sql', mod.default]),
+            import('react-syntax-highlighter/dist/esm/languages/prism/yaml').then((mod) => ['yaml', mod.default]),
+        ]).then(([SyntaxHighlighter, theme, ...languages]) => {
+            for (const [languageName, languageModule] of languages) {
+                SyntaxHighlighter.registerLanguage(languageName, languageModule);
+            }
+
             syntaxHighlighterCache = SyntaxHighlighter;
             syntaxThemeCache = theme;
 
@@ -78,6 +95,32 @@ async function loadSyntaxAssets() {
     }
 
     return syntaxLoaderPromise;
+}
+
+async function loadMarkdownAssets() {
+    if (markdownRendererCache && markdownPluginCache) {
+        return {
+            ReactMarkdown: markdownRendererCache,
+            remarkGfm: markdownPluginCache,
+        };
+    }
+
+    if (!markdownLoaderPromise) {
+        markdownLoaderPromise = Promise.all([
+            import('react-markdown').then((mod) => mod.default),
+            import('remark-gfm').then((mod) => mod.default),
+        ]).then(([ReactMarkdown, remarkGfm]) => {
+            markdownRendererCache = ReactMarkdown;
+            markdownPluginCache = remarkGfm;
+
+            return {
+                ReactMarkdown,
+                remarkGfm,
+            };
+        });
+    }
+
+    return markdownLoaderPromise;
 }
 
 function CodeRenderer({ inline, className, children, ...props }) {
@@ -192,9 +235,43 @@ function MessageItem({ message }) {
     const retryMessageById = useChatStore((state) => state.retryMessageById);
     const speakingMessageId = useChatStore((state) => state.speakingMessageId);
     const [copied, setCopied] = useState(false);
+    const [markdownAssets, setMarkdownAssets] = useState(() => {
+        if (markdownRendererCache && markdownPluginCache) {
+            return {
+                ReactMarkdown: markdownRendererCache,
+                remarkGfm: markdownPluginCache,
+            };
+        }
+
+        return null;
+    });
     const structuredSearchResult =
         message.role === 'assistant' ? parseStructuredWebSearchContent(message.content) : null;
     const isCurrentMessageSpeaking = !isUser && speakingMessageId === message.id;
+
+    useEffect(() => {
+        if (isUser || structuredSearchResult || markdownAssets) {
+            return undefined;
+        }
+
+        let active = true;
+
+        loadMarkdownAssets()
+            .then((loaded) => {
+                if (active) {
+                    setMarkdownAssets(loaded);
+                }
+            })
+            .catch(() => {
+                if (active) {
+                    setMarkdownAssets(null);
+                }
+            });
+
+        return () => {
+            active = false;
+        };
+    }, [isUser, structuredSearchResult, markdownAssets]);
 
     const handleCopyMessage = async () => {
         try {
@@ -315,6 +392,13 @@ function MessageItem({ message }) {
         if (structuredSearchResult) {
             return renderStructuredSearchCards();
         }
+
+        if (!markdownAssets?.ReactMarkdown || !markdownAssets?.remarkGfm) {
+            return <p className="whitespace-pre-wrap break-words">{message.content}</p>;
+        }
+
+        const ReactMarkdown = markdownAssets.ReactMarkdown;
+        const remarkGfm = markdownAssets.remarkGfm;
 
         return (
             <ReactMarkdown
@@ -446,12 +530,21 @@ export default memo(
         const prevThoughtLogs = prevProps.message?.thoughtLogs || [];
         const nextThoughtLogs = nextProps.message?.thoughtLogs || [];
 
+        const prevLastLog = prevLogs[prevLogs.length - 1];
+        const nextLastLog = nextLogs[nextLogs.length - 1];
+        const prevLastThought = prevThoughtLogs[prevThoughtLogs.length - 1];
+        const nextLastThought = nextThoughtLogs[nextThoughtLogs.length - 1];
+
         return (
             prevProps.message?.id === nextProps.message?.id &&
             prevProps.message?.role === nextProps.message?.role &&
             prevProps.message?.content === nextProps.message?.content &&
-            JSON.stringify(prevLogs) === JSON.stringify(nextLogs) &&
-            JSON.stringify(prevThoughtLogs) === JSON.stringify(nextThoughtLogs)
+            prevLogs.length === nextLogs.length &&
+            prevThoughtLogs.length === nextThoughtLogs.length &&
+            prevLastLog?.name === nextLastLog?.name &&
+            prevLastLog?.status === nextLastLog?.status &&
+            prevLastThought?.text === nextLastThought?.text &&
+            prevLastThought?.status === nextLastThought?.status
         );
     }
 );

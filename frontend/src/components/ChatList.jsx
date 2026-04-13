@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { VariableSizeList as List } from 'react-window';
 import { useChatStore } from '../store/chatStore';
 import MessageItem from './MessageItem';
@@ -49,6 +49,7 @@ function Row({ index, style, data }) {
 
 export default function ChatList() {
     const messages = useChatStore((state) => state.messages);
+    const messageSearchKeyword = useChatStore((state) => state.messageSearchKeyword);
     const isSessionLoading = useChatStore((state) => state.isSessionLoading);
     const currentSessionId = useChatStore((state) => state.currentSessionId);
     const listRef = useRef(null);
@@ -59,6 +60,15 @@ export default function ChatList() {
     const isNearBottomRef = useRef(true);
     const [listHeight, setListHeight] = useState(0);
     const [showBackToBottom, setShowBackToBottom] = useState(false);
+
+    const displayedMessages = useMemo(() => {
+        const keyword = String(messageSearchKeyword || '').trim().toLowerCase();
+        if (!keyword) {
+            return messages;
+        }
+
+        return messages.filter((message) => String(message.content || '').toLowerCase().includes(keyword));
+    }, [messages, messageSearchKeyword]);
 
     const scrollOuterToBottom = (behavior = 'smooth') => {
         if (!outerRef.current) {
@@ -115,12 +125,12 @@ export default function ChatList() {
     }, []);
 
     useEffect(() => {
-        if (!listRef.current || messages.length === 0) {
+        if (!listRef.current || displayedMessages.length === 0) {
             return;
         }
 
         if (!hasInitializedScrollRef.current) {
-            listRef.current.scrollToItem(messages.length - 1, 'end');
+            listRef.current.scrollToItem(displayedMessages.length - 1, 'end');
             hasInitializedScrollRef.current = true;
             updateNearBottom();
             return;
@@ -129,7 +139,7 @@ export default function ChatList() {
         if (isNearBottomRef.current && outerRef.current) {
             scrollOuterToBottom('smooth');
         }
-    }, [messages]);
+    }, [displayedMessages]);
 
     useEffect(() => {
         sizeMapRef.current = {};
@@ -191,14 +201,20 @@ export default function ChatList() {
                     outerRef={outerRef}
                     height={listHeight}
                     width="100%"
-                    itemCount={messages.length}
+                    itemCount={displayedMessages.length}
                     itemSize={getItemSize}
-                    itemData={{ messages, setSize }}
+                    itemData={{ messages: displayedMessages, setSize }}
                     itemKey={(index, data) => data.messages[index].id}
                     overscanCount={5}
                 >
                     {Row}
                 </List>
+            )}
+
+            {displayedMessages.length === 0 && !isSessionLoading && (
+                <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-[var(--text-muted)]">
+                    当前筛选条件下没有匹配消息。
+                </div>
             )}
 
             {showBackToBottom && (

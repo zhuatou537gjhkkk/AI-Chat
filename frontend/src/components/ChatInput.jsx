@@ -3,10 +3,61 @@ import { useChatStore } from '../store/chatStore';
 import { uploadFile, uploadImage } from '../api/chat';
 
 const MAX_IMAGE_UPLOAD_BYTES = 8 * 1024 * 1024;
+const TARGET_IMAGE_BYTES = 2 * 1024 * 1024;
+
+function loadImage(file) {
+    return new Promise((resolve, reject) => {
+        const objectUrl = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+            URL.revokeObjectURL(objectUrl);
+            resolve(img);
+        };
+        img.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error('图片读取失败'));
+        };
+        img.src = objectUrl;
+    });
+}
+
+async function compressImageIfNeeded(file) {
+    if (file.size <= TARGET_IMAGE_BYTES) {
+        return file;
+    }
+
+    const image = await loadImage(file);
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+
+    const context = canvas.getContext('2d');
+    if (!context) {
+        return file;
+    }
+
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    let quality = 0.88;
+    let blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+
+    while (blob && blob.size > TARGET_IMAGE_BYTES && quality > 0.5) {
+        quality -= 0.08;
+        blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    }
+
+    if (!blob) {
+        return file;
+    }
+
+    const fallbackName = String(file.name || 'image').replace(/\.[^.]+$/, '') || 'image';
+    return new File([blob], `${fallbackName}.jpg`, { type: 'image/jpeg' });
+}
 
 export default function ChatInput() {
     const [value, setValue] = useState('');
     const [uploadStatus, setUploadStatus] = useState('');
+    const [uploadProgress, setUploadProgress] = useState(null);
     const [isListening, setIsListening] = useState(false);
     const textareaRef = useRef(null);
     const docFileInputRef = useRef(null);
@@ -14,6 +65,7 @@ export default function ChatInput() {
     const recognitionRef = useRef(null);
     const previewUrlRef = useRef(null);
     const sendMessage = useChatStore((state) => state.sendMessage);
+    const currentSessionId = useChatStore((state) => state.currentSessionId);
     const enableWebSearch = useChatStore((state) => state.enableWebSearch);
     const setEnableWebSearch = useChatStore((state) => state.setEnableWebSearch);
     const selectedImage = useChatStore((state) => state.selectedImage);
@@ -23,6 +75,13 @@ export default function ChatInput() {
     const stopMessageStream = useChatStore((state) => state.stopMessageStream);
     const retryLastFailedMessage = useChatStore((state) => state.retryLastFailedMessage);
     const lastFailedUserMessage = useChatStore((state) => state.lastFailedUserMessage);
+    const setCurrentDraft = useChatStore((state) => state.setCurrentDraft);
+    const clearCurrentDraft = useChatStore((state) => state.clearCurrentDraft);
+    const getCurrentDraft = useChatStore((state) => state.getCurrentDraft);
+
+    useEffect(() => {
+        setValue(getCurrentDraft());
+    }, [currentSessionId, getCurrentDraft]);
 
     useEffect(() => {
         const element = textareaRef.current;
@@ -79,6 +138,7 @@ export default function ChatInput() {
         }
 
         setValue('');
+        clearCurrentDraft();
         await sendMessage(text || '请帮我描述这张图片。', { enableWebSearch });
     };
 
@@ -145,12 +205,24 @@ export default function ChatInput() {
             }
 
             setUploadStatus('正在上传图片...');
+            setUploadProgress(0);
             const previousPreviewUrl = selectedImage?.previewUrl;
             if (previousPreviewUrl) {
                 URL.revokeObjectURL(previousPreviewUrl);
             }
 
-            const uploaded = await uploadImage(file);
+            const preparedFile = await compressImageIfNeeded(file);
+            const uploaded = await uploadImage(preparedFile, {
+                retryCount: 1,
+                onProgress: (progressEvent) => {
+                    if (!progressEvent?.lengthComputable || progressEvent.total <= 0) {
+                        return;
+                    }
+
+                    const percentage = Math.round((progressEvent.loaded / progressEvent.total) * 100);
+                    setUploadProgress(Math.max(0, Math.min(100, percentage)));
+                },
+            });
             const imageId = uploaded?.id;
 
             if (!imageId) {
@@ -166,8 +238,10 @@ export default function ChatInput() {
                 fileName: file.name,
             });
             setUploadStatus(`已选择图片: ${file.name}`);
+            setUploadProgress(null);
         } catch (error) {
             setUploadStatus(`图片处理失败: ${error.message || '请重试'}`);
+            setUploadProgress(null);
         } finally {
             event.target.value = '';
         }
@@ -250,7 +324,7 @@ export default function ChatInput() {
 
                 {uploadStatus && (
                     <div className="mb-2 inline-flex max-w-full rounded-full border border-[var(--panel-border)] bg-[var(--panel-bg)] px-3 py-1 text-xs text-[var(--text-muted)]">
-                        <span className="truncate">{uploadStatus}</span>
+                        <span className="truncate">{uploadStatus}{typeof uploadProgress === 'number' ? ` ${uploadProgress}%` : ''}</span>
                     </div>
                 )}
 
@@ -345,7 +419,10 @@ export default function ChatInput() {
                             className="min-h-12 max-h-40 flex-1 resize-none rounded-xl border border-[var(--panel-border)] bg-[var(--panel-bg)] px-3 py-2 text-sm text-[var(--text-main)] outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:focus:border-slate-500 dark:focus:ring-slate-700"
                             placeholder="给 AI 发送消息，Enter 发送，Shift+Enter 换行"
                             value={value}
-                            onChange={(event) => setValue(event.target.value)}
+                            onChange={(event) => {
+                                setValue(event.target.value);
+                                setCurrentDraft(event.target.value);
+                            }}
                             onKeyDown={handleKeyDown}
                         />
                         <button

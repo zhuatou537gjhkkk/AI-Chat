@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useChatStore } from '../store/chatStore';
 
 export default function SettingsModal() {
@@ -20,6 +20,7 @@ export default function SettingsModal() {
     const resetCurrentSessionSettings = useChatStore((state) => state.resetCurrentSessionSettings);
     const toggleSettings = useChatStore((state) => state.toggleSettings);
     const [voices, setVoices] = useState([]);
+    const dialogRef = useRef(null);
 
     useEffect(() => {
         if (typeof window === 'undefined' || !window.speechSynthesis) {
@@ -39,13 +40,47 @@ export default function SettingsModal() {
         };
     }, []);
 
+    useEffect(() => {
+        if (!isSettingsOpen) {
+            return undefined;
+        }
+
+        dialogRef.current?.focus();
+
+        const onKeyDown = (event) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                toggleSettings();
+            }
+        };
+
+        window.addEventListener('keydown', onKeyDown);
+        return () => {
+            window.removeEventListener('keydown', onKeyDown);
+        };
+    }, [isSettingsOpen, toggleSettings]);
+
     if (!isSettingsOpen) {
         return null;
     }
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 sm:p-4">
-            <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-4 shadow-2xl sm:p-6">
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 sm:p-4"
+            onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                    toggleSettings();
+                }
+            }}
+        >
+            <div
+                ref={dialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Agent 设定"
+                tabIndex={-1}
+                className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-4 shadow-2xl outline-none sm:p-6"
+            >
                 <h2 className="text-xl font-semibold text-[var(--text-main)]">Agent 设定</h2>
                 <p className="mt-1 text-xs text-[var(--text-muted)]">当前会话独立保存此处配置，切换会话不会互相影响。</p>
 
