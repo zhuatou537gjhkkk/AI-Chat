@@ -1198,6 +1198,63 @@ export const useChatStore = create(persist((set, get) => ({
         }
 
         const controller = new AbortController();
+        let pendingAssistantChunk = '';
+        let chunkFrameId = null;
+
+        const flushPendingAssistantChunk = () => {
+            if (!pendingAssistantChunk) {
+                return;
+            }
+
+            const latest = get();
+            if (latest.currentSessionId !== sessionId || latest.activeStreamToken !== streamToken) {
+                pendingAssistantChunk = '';
+                return;
+            }
+
+            const chunk = pendingAssistantChunk;
+            pendingAssistantChunk = '';
+
+            set((state) => ({
+                messages: (() => {
+                    const nextMessages = [...state.messages];
+                    const tailIndex = nextMessages.length - 1;
+                    const tail = nextMessages[tailIndex];
+
+                    if (!tail || tail.role !== 'assistant') {
+                        return state.messages;
+                    }
+
+                    nextMessages[tailIndex] = {
+                        ...tail,
+                        content: tail.content + chunk,
+                    };
+
+                    return nextMessages;
+                })(),
+            }));
+        };
+
+        const cancelChunkFrame = () => {
+            if (chunkFrameId === null) {
+                return;
+            }
+
+            cancelAnimationFrame(chunkFrameId);
+            chunkFrameId = null;
+        };
+
+        const scheduleChunkFlush = () => {
+            if (chunkFrameId !== null) {
+                return;
+            }
+
+            chunkFrameId = requestAnimationFrame(() => {
+                chunkFrameId = null;
+                flushPendingAssistantChunk();
+            });
+        };
+
         set({
             activeAbortController: controller,
             activeStreamToken: streamToken,
@@ -1217,30 +1274,17 @@ export const useChatStore = create(persist((set, get) => ({
                     return;
                 }
 
-                set((state) => ({
-                    messages: (() => {
-                        const nextMessages = [...state.messages];
-                        const tailIndex = nextMessages.length - 1;
-                        const tail = nextMessages[tailIndex];
-
-                        if (!tail || tail.role !== 'assistant') {
-                            return state.messages;
-                        }
-
-                        nextMessages[tailIndex] = {
-                            ...tail,
-                            content: tail.content + chunk,
-                        };
-
-                        return nextMessages;
-                    })(),
-                }));
+                pendingAssistantChunk += chunk;
+                scheduleChunkFlush();
             },
             (toolData) => {
                 const latest = get();
                 if (latest.currentSessionId !== sessionId || latest.activeStreamToken !== streamToken) {
                     return;
                 }
+
+                cancelChunkFrame();
+                flushPendingAssistantChunk();
 
                 set((state) => ({
                     messages: (() => {
@@ -1308,8 +1352,13 @@ export const useChatStore = create(persist((set, get) => ({
             () => {
                 const latest = get();
                 if (latest.currentSessionId !== sessionId || latest.activeStreamToken !== streamToken) {
+                    cancelChunkFrame();
+                    pendingAssistantChunk = '';
                     return;
                 }
+
+                cancelChunkFrame();
+                flushPendingAssistantChunk();
 
                 const finalAssistantContent = (() => {
                     for (let i = latest.messages.length - 1; i >= 0; i -= 1) {
@@ -1353,8 +1402,13 @@ export const useChatStore = create(persist((set, get) => ({
 
                 const latest = get();
                 if (latest.currentSessionId !== sessionId || latest.activeStreamToken !== streamToken) {
+                    cancelChunkFrame();
+                    pendingAssistantChunk = '';
                     return;
                 }
+
+                cancelChunkFrame();
+                flushPendingAssistantChunk();
 
                 set((state) => ({
                     messages: (() => {

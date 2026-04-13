@@ -235,7 +235,7 @@ function MessageItem({ message }) {
     const retryMessageById = useChatStore((state) => state.retryMessageById);
     const createBranchFromMessage = useChatStore((state) => state.createBranchFromMessage);
     const editUserMessageAndResend = useChatStore((state) => state.editUserMessageAndResend);
-    const speakingMessageId = useChatStore((state) => state.speakingMessageId);
+    const isCurrentMessageSpeaking = useChatStore((state) => !isUser && state.speakingMessageId === message.id);
     const isTyping = useChatStore((state) => state.isTyping);
     const [copied, setCopied] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
@@ -252,7 +252,6 @@ function MessageItem({ message }) {
     });
     const structuredSearchResult =
         message.role === 'assistant' ? parseStructuredWebSearchContent(message.content) : null;
-    const isCurrentMessageSpeaking = !isUser && speakingMessageId === message.id;
 
     useEffect(() => {
         setEditedValue(String(message.content || ''));

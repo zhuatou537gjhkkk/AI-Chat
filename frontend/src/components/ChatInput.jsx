@@ -64,6 +64,7 @@ export default function ChatInput() {
     const imageFileInputRef = useRef(null);
     const recognitionRef = useRef(null);
     const previewUrlRef = useRef(null);
+    const draftTimerRef = useRef(null);
     const sendMessage = useChatStore((state) => state.sendMessage);
     const currentSessionId = useChatStore((state) => state.currentSessionId);
     const enableWebSearch = useChatStore((state) => state.enableWebSearch);
@@ -82,6 +83,28 @@ export default function ChatInput() {
     useEffect(() => {
         setValue(getCurrentDraft());
     }, [currentSessionId, getCurrentDraft]);
+
+    useEffect(() => {
+        if (!currentSessionId) {
+            return undefined;
+        }
+
+        if (draftTimerRef.current) {
+            clearTimeout(draftTimerRef.current);
+        }
+
+        draftTimerRef.current = setTimeout(() => {
+            setCurrentDraft(value);
+            draftTimerRef.current = null;
+        }, 320);
+
+        return () => {
+            if (draftTimerRef.current) {
+                clearTimeout(draftTimerRef.current);
+                draftTimerRef.current = null;
+            }
+        };
+    }, [value, currentSessionId, setCurrentDraft]);
 
     useEffect(() => {
         const element = textareaRef.current;
@@ -121,6 +144,11 @@ export default function ChatInput() {
     useEffect(() => () => {
         if (recognitionRef.current) {
             recognitionRef.current.stop();
+        }
+
+        if (draftTimerRef.current) {
+            clearTimeout(draftTimerRef.current);
+            draftTimerRef.current = null;
         }
 
         const previewUrl = previewUrlRef.current;
@@ -423,7 +451,6 @@ export default function ChatInput() {
                             value={value}
                             onChange={(event) => {
                                 setValue(event.target.value);
-                                setCurrentDraft(event.target.value);
                             }}
                             onKeyDown={handleKeyDown}
                             aria-keyshortcuts="Enter Shift+Enter Control+K Meta+K"

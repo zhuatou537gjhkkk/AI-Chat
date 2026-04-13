@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { VariableSizeList as List } from 'react-window';
 import { useChatStore } from '../store/chatStore';
 import MessageItem from './MessageItem';
@@ -58,6 +58,8 @@ export default function ChatList() {
     const sizeMapRef = useRef({});
     const hasInitializedScrollRef = useRef(false);
     const isNearBottomRef = useRef(true);
+    const scrollRafRef = useRef(null);
+    const showBackToBottomRef = useRef(false);
     const [listHeight, setListHeight] = useState(0);
     const [showBackToBottom, setShowBackToBottom] = useState(false);
 
@@ -70,7 +72,7 @@ export default function ChatList() {
         return messages.filter((message) => String(message.content || '').toLowerCase().includes(keyword));
     }, [messages, messageSearchKeyword]);
 
-    const scrollOuterToBottom = (behavior = 'smooth') => {
+    const scrollOuterToBottom = useCallback((behavior = 'smooth') => {
         if (!outerRef.current) {
             return;
         }
@@ -79,9 +81,9 @@ export default function ChatList() {
             top: outerRef.current.scrollHeight,
             behavior,
         });
-    };
+    }, []);
 
-    const updateNearBottom = () => {
+    const measureNearBottom = useCallback(() => {
         const outer = outerRef.current;
 
         if (!outer) {
@@ -90,18 +92,35 @@ export default function ChatList() {
 
         const distanceToBottom = outer.scrollHeight - outer.scrollTop - outer.clientHeight;
         isNearBottomRef.current = distanceToBottom < 120;
-        setShowBackToBottom(distanceToBottom > 220);
-    };
+        const nextShowBackToBottom = distanceToBottom > 220;
 
-    const scrollToBottom = () => {
+        if (showBackToBottomRef.current !== nextShowBackToBottom) {
+            showBackToBottomRef.current = nextShowBackToBottom;
+            setShowBackToBottom(nextShowBackToBottom);
+        }
+    }, []);
+
+    const updateNearBottom = useCallback(() => {
+        if (scrollRafRef.current !== null) {
+            return;
+        }
+
+        scrollRafRef.current = requestAnimationFrame(() => {
+            scrollRafRef.current = null;
+            measureNearBottom();
+        });
+    }, [measureNearBottom]);
+
+    const scrollToBottom = useCallback(() => {
         if (!outerRef.current) {
             return;
         }
 
         scrollOuterToBottom('smooth');
         isNearBottomRef.current = true;
+        showBackToBottomRef.current = false;
         setShowBackToBottom(false);
-    };
+    }, [scrollOuterToBottom]);
 
     useEffect(() => {
         const element = containerRef.current;
@@ -146,7 +165,7 @@ export default function ChatList() {
         hasInitializedScrollRef.current = false;
     }, [currentSessionId]);
 
-    const setSize = (index, size) => {
+    const setSize = useCallback((index, size) => {
         const prev = sizeMapRef.current[index];
 
         if (prev === size) {
@@ -163,9 +182,17 @@ export default function ChatList() {
                 });
             }
         }
-    };
+    }, [scrollOuterToBottom]);
 
-    const getItemSize = (index) => sizeMapRef.current[index] || ESTIMATED_ITEM_HEIGHT;
+    const getItemSize = useCallback((index) => sizeMapRef.current[index] || ESTIMATED_ITEM_HEIGHT, []);
+    const listItemData = useMemo(() => ({ messages: displayedMessages, setSize }), [displayedMessages, setSize]);
+
+    useEffect(() => () => {
+        if (scrollRafRef.current !== null) {
+            cancelAnimationFrame(scrollRafRef.current);
+            scrollRafRef.current = null;
+        }
+    }, []);
 
     useEffect(() => {
         const outer = outerRef.current;
@@ -203,7 +230,7 @@ export default function ChatList() {
                     width="100%"
                     itemCount={displayedMessages.length}
                     itemSize={getItemSize}
-                    itemData={{ messages: displayedMessages, setSize }}
+                    itemData={listItemData}
                     itemKey={(index, data) => data.messages[index].id}
                     overscanCount={5}
                 >
