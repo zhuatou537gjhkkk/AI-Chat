@@ -8,6 +8,12 @@ import {
     updateSessionTitle,
     deleteSession as deleteSessionApi,
     updateSessionPin,
+    registerAuth,
+    loginAuth,
+    fetchMe,
+    setAuthToken,
+    createSessionBranch,
+    deleteMessagePair,
 } from '../api/chat';
 
 const initialMessage = {
@@ -22,6 +28,15 @@ const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_VOICE_RATE = 1;
 const DEFAULT_VOICE_VOLUME = 1;
 const DEFAULT_THEME_MODE = 'system';
+const AUTH_STORAGE_KEY = 'chat-agent-auth-token';
+
+function readStoredAuthToken() {
+    if (typeof window === 'undefined') {
+        return '';
+    }
+
+    return String(window.localStorage.getItem(AUTH_STORAGE_KEY) || '');
+}
 
 function sanitizeSpeechText(text) {
     const source = String(text || '');
@@ -298,6 +313,11 @@ export const useChatStore = create(persist((set, get) => ({
     isExporting: false,
     sessionDrafts: {},
     messageSearchKeyword: '',
+    authToken: readStoredAuthToken(),
+    user: null,
+    isAuthenticated: false,
+    isAuthLoading: false,
+    authError: '',
     setEnableWebSearch: (enabled) => {
         set((state) => {
             const nextValue = typeof enabled === 'function'
@@ -403,6 +423,132 @@ export const useChatStore = create(persist((set, get) => ({
     setMessageSearchKeyword: (keyword) => {
         set({ messageSearchKeyword: String(keyword || '') });
     },
+    initAuth: async () => {
+        const token = String(get().authToken || '');
+
+        if (!token) {
+            setAuthToken('');
+            set({
+                user: null,
+                isAuthenticated: false,
+                isAuthLoading: false,
+            });
+            return;
+        }
+
+        set({ isAuthLoading: true, authError: '' });
+        setAuthToken(token);
+
+        try {
+            const data = await fetchMe();
+            set({
+                user: data?.user || null,
+                isAuthenticated: Boolean(data?.user),
+                isAuthLoading: false,
+                authError: '',
+            });
+        } catch (error) {
+            setAuthToken('');
+            set({
+                authToken: '',
+                user: null,
+                isAuthenticated: false,
+                isAuthLoading: false,
+                authError: '登录状态已过期，请重新登录。',
+                sessions: [],
+                currentSessionId: null,
+                hasInitializedSessions: false,
+                messages: [initialMessage],
+            });
+        }
+    },
+    register: async (username, password) => {
+        const safeUsername = String(username || '').trim();
+        const safePassword = String(password || '');
+
+        if (safeUsername.length < 3 || safePassword.length < 6) {
+            set({ authError: '用户名至少 3 位，密码至少 6 位。' });
+            return false;
+        }
+
+        set({ isAuthLoading: true, authError: '' });
+
+        try {
+            const data = await registerAuth(safeUsername, safePassword);
+            const token = String(data?.token || '');
+            setAuthToken(token);
+
+            set({
+                authToken: token,
+                user: data?.user || null,
+                isAuthenticated: Boolean(data?.user),
+                isAuthLoading: false,
+                authError: '',
+                hasInitializedSessions: false,
+                sessions: [],
+                currentSessionId: null,
+                messages: [initialMessage],
+            });
+            return true;
+        } catch (error) {
+            set({
+                isAuthLoading: false,
+                authError: error?.message || '注册失败，请稍后重试。',
+            });
+            return false;
+        }
+    },
+    login: async (username, password) => {
+        const safeUsername = String(username || '').trim();
+        const safePassword = String(password || '');
+
+        if (!safeUsername || !safePassword) {
+            set({ authError: '请输入用户名和密码。' });
+            return false;
+        }
+
+        set({ isAuthLoading: true, authError: '' });
+
+        try {
+            const data = await loginAuth(safeUsername, safePassword);
+            const token = String(data?.token || '');
+            setAuthToken(token);
+
+            set({
+                authToken: token,
+                user: data?.user || null,
+                isAuthenticated: Boolean(data?.user),
+                isAuthLoading: false,
+                authError: '',
+                hasInitializedSessions: false,
+                sessions: [],
+                currentSessionId: null,
+                messages: [initialMessage],
+            });
+            return true;
+        } catch (error) {
+            set({
+                isAuthLoading: false,
+                authError: error?.message || '登录失败，请稍后重试。',
+            });
+            return false;
+        }
+    },
+    logout: () => {
+        setAuthToken('');
+
+        set({
+            authToken: '',
+            user: null,
+            isAuthenticated: false,
+            hasInitializedSessions: false,
+            sessions: [],
+            currentSessionId: null,
+            messages: [initialMessage],
+            sessionError: '',
+            authError: '',
+        });
+    },
     getCurrentDraft: () => {
         const state = get();
         const sessionId = state.currentSessionId;
@@ -475,6 +621,12 @@ export const useChatStore = create(persist((set, get) => ({
     },
     initSessions: async () => {
         const state = get();
+
+        if (!state.isAuthenticated || !state.authToken) {
+            return;
+        }
+
+        setAuthToken(state.authToken);
 
         if (state.isSessionLoading) {
             return;
@@ -856,6 +1008,114 @@ export const useChatStore = create(persist((set, get) => ({
             }
         }
     },
+    createBranchFromMessage: async (messageId) => {
+        if (get().isTyping) {
+            return;
+        }
+
+        const state = get();
+        const sessionId = state.currentSessionId;
+        if (!sessionId) {
+            return;
+        }
+
+        const messages = state.messages;
+        const target = messages.find((item) => String(item.id) === String(messageId));
+        if (!target) {
+            return;
+        }
+
+        const sourceSession = state.sessions.find((item) => item.id === sessionId);
+        const title = `${sourceSession?.title || DEFAULT_SESSION_TITLE} · 分支`;
+        const numericMessageId = Number(messageId);
+        if (!Number.isInteger(numericMessageId) || numericMessageId <= 0) {
+            set({ sessionError: '该消息尚未入库，请稍后再分支。' });
+            return;
+        }
+
+        try {
+            const payload = await createSessionBranch(sessionId, {
+                fromMessageId: numericMessageId,
+                title,
+            });
+
+            const newSessionId = Number(payload?.id);
+            if (!newSessionId) {
+                return;
+            }
+
+            set((current) => ({
+                sessions: sortSessions([
+                    payload?.session || {
+                        id: newSessionId,
+                        title,
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString(),
+                    },
+                    ...current.sessions,
+                ]),
+                sessionError: '',
+            }));
+
+            await get().switchSession(newSessionId);
+        } catch (error) {
+            set({ sessionError: error?.message || '创建分支失败，请稍后重试。' });
+        }
+    },
+    editUserMessageAndResend: async (messageId, editedContent) => {
+        if (get().isTyping) {
+            return;
+        }
+
+        const nextContent = String(editedContent || '').trim();
+        if (!nextContent) {
+            return;
+        }
+
+        const state = get();
+        const sessionId = state.currentSessionId;
+        if (!sessionId) {
+            return;
+        }
+
+        const targetIndex = state.messages.findIndex((item) => String(item.id) === String(messageId));
+        if (targetIndex < 0 || state.messages[targetIndex]?.role !== 'user') {
+            return;
+        }
+
+        const numericMessageId = Number(messageId);
+        if (!Number.isInteger(numericMessageId) || numericMessageId <= 0) {
+            set({ sessionError: '该消息尚未入库，请稍后再编辑重发。' });
+            return;
+        }
+
+        try {
+            await deleteMessagePair(sessionId, numericMessageId);
+
+            set((current) => ({
+                messages: current.messages.filter((item, index) => {
+                    if (String(item.id) === String(messageId) && item.role === 'user') {
+                        return false;
+                    }
+
+                    const prev = current.messages[index - 1];
+                    const isPairedAssistant =
+                        item.role === 'assistant' &&
+                        prev?.role === 'user' &&
+                        String(prev.id) === String(messageId);
+
+                    return !isPairedAssistant;
+                }),
+                sessionError: '',
+            }));
+
+            await get().sendMessage(nextContent, {
+                enableWebSearch: get().enableWebSearch,
+            });
+        } catch (error) {
+            set({ sessionError: error?.message || '编辑重发失败，请稍后重试。' });
+        }
+    },
     sendMessage: async (content, options = {}) => {
         const effectiveEnableWebSearch = options.enableWebSearch ?? get().enableWebSearch;
         const enableWebSearch = Boolean(effectiveEnableWebSearch);
@@ -1024,10 +1284,21 @@ export const useChatStore = create(persist((set, get) => ({
                             });
                         }
 
+                        const nextMetrics = toolData?.type === 'metrics'
+                            ? {
+                                latency_ms: Number(toolData?.metrics?.latency_ms) || 0,
+                                prompt_tokens: Number(toolData?.metrics?.prompt_tokens) || 0,
+                                completion_tokens: Number(toolData?.metrics?.completion_tokens) || 0,
+                                total_tokens: Number(toolData?.metrics?.total_tokens) || 0,
+                                model: String(toolData?.metrics?.model || ''),
+                            }
+                            : tail.metrics;
+
                         nextMessages[tailIndex] = {
                             ...tail,
                             toolLogs: currentToolLogs,
                             thoughtLogs: currentThoughtLogs,
+                            metrics: nextMetrics,
                         };
 
                         return nextMessages;
@@ -1061,6 +1332,21 @@ export const useChatStore = create(persist((set, get) => ({
                     lastFailedUserMessage: '',
                     lastFailedRequest: null,
                 });
+
+                fetchMessagesBySession(sessionId)
+                    .then((history) => {
+                        const current = get();
+                        if (current.currentSessionId !== sessionId || current.isTyping) {
+                            return;
+                        }
+
+                        if (Array.isArray(history) && history.length > 0) {
+                            set({ messages: history });
+                        }
+                    })
+                    .catch(() => {
+                        // Ignore refresh failures and keep optimistic messages.
+                    });
             },
             (error) => {
                 const isAbort = error?.name === 'AbortError';
@@ -1114,6 +1400,8 @@ export const useChatStore = create(persist((set, get) => ({
 }), {
     name: 'chat-agent-settings',
     partialize: (state) => ({
+        authToken: state.authToken,
+        user: state.user,
         sessionAgentSettings: state.sessionAgentSettings,
         sessionDrafts: state.sessionDrafts,
         enableWebSearch: state.enableWebSearch,

@@ -346,6 +346,7 @@ export default function ChatInput() {
                 )}
 
                 <div className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-2.5 shadow-[0_12px_30px_rgba(15,23,42,0.06)] dark:shadow-[0_12px_30px_rgba(0,0,0,0.35)]">
+                    <p className="mb-2 text-[11px] text-[var(--text-muted)]">快捷键: Ctrl/⌘+K 聚焦输入, Ctrl/⌘+/ 查看帮助</p>
                     <div className="mb-2 flex flex-wrap items-center gap-2">
                         <button
                             type="button"
@@ -415,6 +416,7 @@ export default function ChatInput() {
 
                     <div className="flex items-end gap-2 sm:gap-3">
                         <textarea
+                            id="chat-input-textarea"
                             ref={textareaRef}
                             className="min-h-12 max-h-40 flex-1 resize-none rounded-xl border border-[var(--panel-border)] bg-[var(--panel-bg)] px-3 py-2 text-sm text-[var(--text-main)] outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:focus:border-slate-500 dark:focus:ring-slate-700"
                             placeholder="给 AI 发送消息，Enter 发送，Shift+Enter 换行"
@@ -424,6 +426,7 @@ export default function ChatInput() {
                                 setCurrentDraft(event.target.value);
                             }}
                             onKeyDown={handleKeyDown}
+                            aria-keyshortcuts="Enter Shift+Enter Control+K Meta+K"
                         />
                         <button
                             type="button"

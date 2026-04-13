@@ -1,6 +1,39 @@
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').trim();
 const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS) || 30000;
 const DEFAULT_RETRY_COUNT = 1;
+const AUTH_STORAGE_KEY = 'chat-agent-auth-token';
+
+let authToken = '';
+
+function readPersistedAuthToken() {
+    if (typeof window === 'undefined') {
+        return '';
+    }
+
+    return String(window.localStorage.getItem(AUTH_STORAGE_KEY) || '');
+}
+
+export function setAuthToken(token) {
+    const value = String(token || '');
+    authToken = value;
+
+    if (typeof window !== 'undefined') {
+        if (value) {
+            window.localStorage.setItem(AUTH_STORAGE_KEY, value);
+        } else {
+            window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+    }
+}
+
+function getAuthToken() {
+    if (authToken) {
+        return authToken;
+    }
+
+    authToken = readPersistedAuthToken();
+    return authToken;
+}
 
 function shouldRetryStatus(status) {
     return status === 408 || status === 409 || status === 425 || status === 429 || status === 502 || status === 503 || status === 504;
@@ -67,6 +100,14 @@ async function request(path, options = {}, config = {}) {
     } = config;
 
     const method = options.method || 'GET';
+    const headers = {
+        ...(options.headers || {}),
+    };
+
+    const token = getAuthToken();
+    if (token) {
+        headers.Authorization = `Bearer ${token}`;
+    }
 
     for (let attempt = 0; attempt <= retryCount; attempt += 1) {
         const { signal, cleanup } = createRequestController(externalSignal, timeoutMs);
@@ -74,6 +115,7 @@ async function request(path, options = {}, config = {}) {
         try {
             const response = await fetch(`${BASE_URL}${path}`, {
                 ...options,
+                headers,
                 signal,
             });
 
@@ -107,6 +149,44 @@ async function request(path, options = {}, config = {}) {
     }
 
     throw new Error(`${method} request failed`);
+}
+
+export async function registerAuth(username, password) {
+    const response = await request('/auth/register', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password }),
+    }, {
+        retryCount: 0,
+    });
+
+    return response.json();
+}
+
+export async function loginAuth(username, password) {
+    const response = await request('/auth/login', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password }),
+    }, {
+        retryCount: 0,
+    });
+
+    return response.json();
+}
+
+export async function fetchMe() {
+    const response = await request('/auth/me', {
+        method: 'GET',
+    }, {
+        retryCount: 0,
+    });
+
+    return response.json();
 }
 
 export async function fetchSessions() {
@@ -164,6 +244,36 @@ export async function fetchMessagesBySession(id) {
     const response = await request(`/sessions/${id}/messages`);
     const data = await response.json();
     return data?.messages || [];
+}
+
+export async function deleteMessagePair(sessionId, messageId) {
+    const response = await request(`/sessions/${sessionId}/messages/${messageId}/pair`, {
+        method: 'DELETE',
+    });
+
+    return response.json();
+}
+
+export async function createSessionBranch(sessionId, options = {}) {
+    const {
+        fromMessageId = null,
+        title = '',
+        editedContent = '',
+    } = options;
+
+    const response = await request(`/sessions/${sessionId}/branch`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            from_message_id: fromMessageId,
+            title,
+            edited_content: editedContent,
+        }),
+    });
+
+    return response.json();
 }
 
 export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, onDone, onError, options = {}) {
@@ -226,7 +336,7 @@ export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, 
                     return;
                 }
 
-                if (eventType === 'tool_start' || eventType === 'tool_end' || eventType === 'thought') {
+                if (eventType === 'tool_start' || eventType === 'tool_end' || eventType === 'thought' || eventType === 'metrics') {
                     onToolEvent(parsed);
                 }
             } catch {
@@ -307,6 +417,11 @@ export async function uploadImage(file, options = {}) {
         xhr.open('POST', `${BASE_URL}/upload-image`, true);
         xhr.responseType = 'json';
         xhr.timeout = timeoutMs;
+
+        const token = getAuthToken();
+        if (token) {
+            xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        }
 
         const abortFromSignal = () => {
             xhr.abort();

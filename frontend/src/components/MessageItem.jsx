@@ -233,8 +233,13 @@ function MessageItem({ message }) {
     const toolLogs = Array.isArray(message.toolLogs) ? message.toolLogs : [];
     const thoughtLogs = Array.isArray(message.thoughtLogs) ? message.thoughtLogs : [];
     const retryMessageById = useChatStore((state) => state.retryMessageById);
+    const createBranchFromMessage = useChatStore((state) => state.createBranchFromMessage);
+    const editUserMessageAndResend = useChatStore((state) => state.editUserMessageAndResend);
     const speakingMessageId = useChatStore((state) => state.speakingMessageId);
+    const isTyping = useChatStore((state) => state.isTyping);
     const [copied, setCopied] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
+    const [editedValue, setEditedValue] = useState(String(message.content || ''));
     const [markdownAssets, setMarkdownAssets] = useState(() => {
         if (markdownRendererCache && markdownPluginCache) {
             return {
@@ -248,6 +253,11 @@ function MessageItem({ message }) {
     const structuredSearchResult =
         message.role === 'assistant' ? parseStructuredWebSearchContent(message.content) : null;
     const isCurrentMessageSpeaking = !isUser && speakingMessageId === message.id;
+
+    useEffect(() => {
+        setEditedValue(String(message.content || ''));
+        setIsEditing(false);
+    }, [message.id, message.content]);
 
     useEffect(() => {
         if (isUser || structuredSearchResult || markdownAssets) {
@@ -484,12 +494,49 @@ function MessageItem({ message }) {
                         </button>
                     )}
                     {isUser ? (
-                        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                        isEditing ? (
+                            <div className="space-y-2">
+                                <textarea
+                                    value={editedValue}
+                                    onChange={(event) => setEditedValue(event.target.value)}
+                                    className="w-full min-h-24 rounded-lg border border-slate-500/40 bg-black/10 px-2 py-1.5 text-sm text-white outline-none"
+                                />
+                                <div className="flex gap-2 text-xs">
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsEditing(false)}
+                                        className="rounded-md border border-slate-300/50 px-2 py-1"
+                                    >
+                                        取消
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled={isTyping}
+                                        onClick={async () => {
+                                            await editUserMessageAndResend(message.id, editedValue);
+                                            setIsEditing(false);
+                                        }}
+                                        className="rounded-md bg-white px-2 py-1 font-semibold text-slate-900 disabled:opacity-60"
+                                    >
+                                        保存并重发
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                        )
                     ) : (
                         <div className="break-words pr-7 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-6">
                             {renderThoughtLogs()}
                             {renderToolLogs()}
                             {renderAssistantContent()}
+                            {message?.metrics && (
+                                <div className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-bg)] px-2 py-1 text-[11px] text-[var(--text-muted)]">
+                                    <span>响应 {message.metrics.latency_ms}ms</span>
+                                    <span>Token {message.metrics.total_tokens}</span>
+                                    {message.metrics.model && <span>{message.metrics.model}</span>}
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -512,6 +559,33 @@ function MessageItem({ message }) {
                                     className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-bg)] px-2 py-0.5 text-[var(--text-muted)] transition hover:opacity-95 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
                                 >
                                     重试
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={isTyping}
+                                    onClick={() => createBranchFromMessage(message.id)}
+                                    className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-bg)] px-2 py-0.5 text-[var(--text-muted)] transition hover:opacity-95 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 disabled:opacity-60"
+                                >
+                                    分支
+                                </button>
+                            </>
+                        )}
+                        {isUser && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsEditing((prev) => !prev)}
+                                    className="rounded-lg border border-white/25 bg-white/10 px-2 py-0.5 text-slate-100 transition hover:bg-white/15"
+                                >
+                                    {isEditing ? '收起编辑' : '编辑重发'}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={isTyping}
+                                    onClick={() => createBranchFromMessage(message.id)}
+                                    className="rounded-lg border border-white/25 bg-white/10 px-2 py-0.5 text-slate-100 transition hover:bg-white/15 disabled:opacity-60"
+                                >
+                                    分支
                                 </button>
                             </>
                         )}
@@ -539,6 +613,9 @@ export default memo(
             prevProps.message?.id === nextProps.message?.id &&
             prevProps.message?.role === nextProps.message?.role &&
             prevProps.message?.content === nextProps.message?.content &&
+            prevProps.message?.metrics?.latency_ms === nextProps.message?.metrics?.latency_ms &&
+            prevProps.message?.metrics?.total_tokens === nextProps.message?.metrics?.total_tokens &&
+            prevProps.message?.metrics?.model === nextProps.message?.metrics?.model &&
             prevLogs.length === nextLogs.length &&
             prevThoughtLogs.length === nextThoughtLogs.length &&
             prevLastLog?.name === nextLastLog?.name &&

@@ -10,6 +10,15 @@ const FORCED_WEB_SEARCH_MAX_CHARS = 8000;
 const DEFAULT_SYSTEM_PROMPT = "你是一个有用的 AI 助手。";
 const DEFAULT_TEMPERATURE = 0.7;
 
+function estimateTokens(text) {
+    const source = String(text || "");
+    if (!source.trim()) {
+        return 0;
+    }
+
+    return Math.max(1, Math.ceil(source.length / 4));
+}
+
 function resolveModelName(hasImage = false) {
     if (hasImage) {
         // 视觉模式建议将环境变量切换为支持多模态的模型，如 qwen-vl-max 或 qwen-vl-plus。
@@ -203,22 +212,25 @@ async function streamDirectChat({
     return fullText;
 }
 
-export async function chatWithStream(session_id, userMessage, image, systemPromptInput, temperatureInput, res, options = {}) {
+export async function chatWithStream(userId, session_id, userMessage, image, systemPromptInput, temperatureInput, res, options = {}) {
     const {
         enableWebSearch = false,
         skipUserMessageSave = false,
-        userMessageForStorage
+        userMessageForStorage,
+        onComplete,
     } = options;
     const normalizedUserMessage = String(userMessage || "");
     const temperature = normalizeTemperature(temperatureInput);
     const systemPrompt = resolveSystemPrompt(systemPromptInput);
     const hasImage = Boolean(image);
+    const startedAt = Date.now();
+    const modelName = resolveModelName(hasImage);
 
     if (!skipUserMessageSave) {
-        saveMessage(session_id, "user", userMessageForStorage ?? normalizedUserMessage);
+        saveMessage(userId, session_id, "user", userMessageForStorage ?? normalizedUserMessage);
     }
 
-    const history = getHistoryMessages(session_id, 10);
+    const history = getHistoryMessages(userId, session_id, 10);
     const formattedHistory = history.map(toLangChainMessage);
 
     // We pass the latest user message as input, so remove duplicated tail user message from chat_history.
@@ -251,7 +263,19 @@ export async function chatWithStream(session_id, userMessage, image, systemPromp
                 temperature
             });
 
-            saveMessage(session_id, "assistant", fullText);
+            const assistantMessageId = saveMessage(userId, session_id, "assistant", fullText);
+            const promptTokens = estimateTokens(
+                `${directSystemInstruction}\n${formattedHistory.map((item) => normalizeChunkContent(item?.content)).join("\n")}\n${normalizedUserMessage}`
+            );
+            const completionTokens = estimateTokens(fullText);
+            onComplete?.({
+                messageId: assistantMessageId,
+                latency_ms: Date.now() - startedAt,
+                prompt_tokens: promptTokens,
+                completion_tokens: completionTokens,
+                total_tokens: promptTokens + completionTokens,
+                model: modelName,
+            });
             emitThought(res, "回答生成完成", "done");
             res.write("data: [DONE]\n\n");
             res.end();
@@ -358,7 +382,19 @@ export async function chatWithStream(session_id, userMessage, image, systemPromp
             res.write(`data: ${JSON.stringify({ type: "text", text })}\n\n`);
         }
 
-        saveMessage(session_id, "assistant", fullText);
+        const assistantMessageId = saveMessage(userId, session_id, "assistant", fullText);
+        const promptTokens = estimateTokens(
+            `${systemPrompt}\n${formattedHistory.map((item) => normalizeChunkContent(item?.content)).join("\n")}\n${inputForAgent}`
+        );
+        const completionTokens = estimateTokens(fullText);
+        onComplete?.({
+            messageId: assistantMessageId,
+            latency_ms: Date.now() - startedAt,
+            prompt_tokens: promptTokens,
+            completion_tokens: completionTokens,
+            total_tokens: promptTokens + completionTokens,
+            model: modelName,
+        });
         emitThought(res, "回答生成完成", "done");
         res.write("data: [DONE]\n\n");
         res.end();
