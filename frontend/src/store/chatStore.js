@@ -21,6 +21,7 @@ const DEFAULT_SYSTEM_PROMPT = '你是一个有用的 AI 助手。';
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_VOICE_RATE = 1;
 const DEFAULT_VOICE_VOLUME = 1;
+const DEFAULT_THEME_MODE = 'system';
 
 function sanitizeSpeechText(text) {
     const source = String(text || '');
@@ -174,6 +175,76 @@ function toSessionPreviewTitle(content) {
     return normalized.slice(0, 18);
 }
 
+function resolveThemeValue(mode) {
+    if (mode === 'dark' || mode === 'light') {
+        return mode;
+    }
+
+    if (typeof window === 'undefined' || !window.matchMedia) {
+        return 'light';
+    }
+
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function createMarkdownExportContent(sessionTitle, messages) {
+    const safeTitle = String(sessionTitle || DEFAULT_SESSION_TITLE).trim() || DEFAULT_SESSION_TITLE;
+    const lines = [
+        `# ${safeTitle}`,
+        '',
+        `导出时间: ${new Date().toLocaleString()}`,
+        '',
+        '---',
+        '',
+    ];
+
+    const list = Array.isArray(messages) ? messages : [];
+    for (const message of list) {
+        if (!message || (message.role !== 'user' && message.role !== 'assistant')) {
+            continue;
+        }
+
+        const roleLabel = message.role === 'user' ? '用户' : '助手';
+        lines.push(`## ${roleLabel}`);
+        lines.push('');
+        lines.push(String(message.content || '').trim() || '(空消息)');
+        lines.push('');
+    }
+
+    return `${lines.join('\n').trim()}\n`;
+}
+
+function toExportFileName(title) {
+    const safeTitle = String(title || DEFAULT_SESSION_TITLE)
+        .trim()
+        .replace(/[\\/:*?"<>|]+/g, '-')
+        .replace(/\s+/g, ' ')
+        .slice(0, 48) || DEFAULT_SESSION_TITLE;
+    const now = new Date();
+    const stamp = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, '0'),
+        String(now.getDate()).padStart(2, '0'),
+        '-',
+        String(now.getHours()).padStart(2, '0'),
+        String(now.getMinutes()).padStart(2, '0'),
+    ].join('');
+
+    return `${safeTitle}-${stamp}.md`;
+}
+
+function downloadMarkdownFile(fileName, content) {
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+}
+
 function isDefaultSessionTitle(title) {
     return !title || title === DEFAULT_SESSION_TITLE;
 }
@@ -223,6 +294,8 @@ export const useChatStore = create(persist((set, get) => ({
     voiceVolume: DEFAULT_VOICE_VOLUME,
     voiceName: '',
     speakingMessageId: null,
+    themeMode: DEFAULT_THEME_MODE,
+    isExporting: false,
     setEnableWebSearch: (enabled) => {
         set((state) => {
             const nextValue = typeof enabled === 'function'
@@ -320,6 +393,38 @@ export const useChatStore = create(persist((set, get) => ({
     },
     setVoiceName: (voiceName) => {
         set({ voiceName: String(voiceName || '') });
+    },
+    setThemeMode: (mode) => {
+        const nextMode = ['light', 'dark', 'system'].includes(mode) ? mode : DEFAULT_THEME_MODE;
+        set({ themeMode: nextMode });
+    },
+    getResolvedTheme: () => resolveThemeValue(get().themeMode),
+    exportCurrentSessionMarkdown: async () => {
+        if (get().isExporting) {
+            return;
+        }
+
+        const state = get();
+        const sessionId = state.currentSessionId;
+        if (!sessionId) {
+            return;
+        }
+
+        set({ isExporting: true });
+
+        try {
+            const history = await fetchMessagesBySession(sessionId);
+            const sourceMessages = history.length > 0 ? history : state.messages;
+            const session = state.sessions.find((item) => item.id === sessionId);
+            const title = session?.title || DEFAULT_SESSION_TITLE;
+            const markdown = createMarkdownExportContent(title, sourceMessages);
+            downloadMarkdownFile(toExportFileName(title), markdown);
+            set({ sessionError: '' });
+        } catch (error) {
+            set({ sessionError: '导出失败，请稍后重试。' });
+        } finally {
+            set({ isExporting: false });
+        }
     },
     initSessions: async () => {
         const state = get();
@@ -959,5 +1064,6 @@ export const useChatStore = create(persist((set, get) => ({
         voiceRate: state.voiceRate,
         voiceVolume: state.voiceVolume,
         voiceName: state.voiceName,
+        themeMode: state.themeMode,
     }),
 }));

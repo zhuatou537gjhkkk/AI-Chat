@@ -1,3 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+    :root {
+        color-scheme: light;
+        --app-bg: #f6f7f9;
+        --panel-bg: #ffffff;
+        --panel-soft: #f1f3f7;
+        --panel-border: #e3e7ef;
+        --text-main: #1f2937;
+        --text-muted: #667085;
+        --brand: #101828;
+    }
+
+    :root.dark {
+        color-scheme: dark;
+        --app-bg: #111315;
+        --panel-bg: #1a1d21;
+        --panel-soft: #22262c;
+        --panel-border: #303641;
+        --text-main: #e5e7eb;
+        --text-muted: #9aa4b2;
+        --brand: #eceff3;
+    }
+
+    html,
+    body,
+    #root {
+        height: 100%;
+    }
+
+    body {
+        margin: 0;
+        font-family: 'Manrope', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        background: radial-gradient(circle at 20% -10%, #ffffff 0, var(--app-bg) 58%);
+        color: var(--text-main);
+    }
+
+    :root.dark body {
+        background: radial-gradient(circle at 20% -10%, #1d2128 0, var(--app-bg) 55%);
+    }
+
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: #a7b0be transparent;
+    }
+
+    *::-webkit-scrollbar {
+        width: 9px;
+        height: 9px;
+    }
+
+    *::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: rgba(120, 132, 152, 0.55);
+        border: 2px solid transparent;
+        background-clip: padding-box;
+    }
+
+    *::-webkit-scrollbar-track {
+        background: transparent;
+    }
+}

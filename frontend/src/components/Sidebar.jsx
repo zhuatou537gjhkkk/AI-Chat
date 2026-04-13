@@ -15,6 +15,8 @@ export default function Sidebar({ className = '', onAfterSelect }) {
     const deleteSession = useChatStore((state) => state.deleteSession);
     const toggleSessionPin = useChatStore((state) => state.toggleSessionPin);
     const toggleSettings = useChatStore((state) => state.toggleSettings);
+    const exportCurrentSessionMarkdown = useChatStore((state) => state.exportCurrentSessionMarkdown);
+    const isExporting = useChatStore((state) => state.isExporting);
 
     const filteredSessions = useMemo(() => {
         const q = keyword.trim().toLowerCase();
@@ -67,27 +69,27 @@ export default function Sidebar({ className = '', onAfterSelect }) {
     };
 
     return (
-        <aside className={`flex h-full w-72 flex-col bg-gray-900 text-white ${className}`}>
-            <div className="border-b border-gray-800 p-4">
+        <aside className={`flex h-full w-[280px] max-w-[88vw] flex-col border-r border-slate-800 bg-[#17191c] text-slate-100 ${className}`}>
+            <div className="border-b border-slate-800 p-4">
                 <button
                     type="button"
                     onClick={handleCreate}
                     disabled={isCreatingSession}
-                    className="w-full rounded-lg bg-blue-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-blue-400"
+                    className="w-full rounded-xl border border-slate-700 bg-slate-800/80 px-3 py-2.5 text-sm font-semibold text-slate-100 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                    {isCreatingSession ? '创建中...' : '+ 新建对话'}
+                    {isCreatingSession ? '创建中...' : '+ 新建聊天'}
                 </button>
 
                 <input
                     value={keyword}
                     onChange={(event) => setKeyword(event.target.value)}
                     placeholder="搜索会话"
-                    className="mt-3 w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-xs text-gray-100 outline-none placeholder:text-gray-400 focus:border-blue-400"
+                    className="mt-3 w-full rounded-xl border border-slate-700 bg-[#1f2329] px-3 py-2 text-xs text-slate-200 outline-none placeholder:text-slate-500 focus:border-slate-500"
                 />
             </div>
 
             {sessionError && (
-                <div className="mx-3 mt-3 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                <div className="mx-3 mt-3 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
                     <p>{sessionError}</p>
                     <button
                         type="button"
@@ -109,16 +111,17 @@ export default function Sidebar({ className = '', onAfterSelect }) {
                                 <button
                                     type="button"
                                     onClick={() => handleSwitch(session.id)}
+                                    aria-label={`切换到会话 ${session.title || '未命名会话'}`}
                                     className={[
-                                        'w-full rounded-lg px-3 py-2 text-left text-sm transition',
+                                        'group w-full rounded-xl px-3 py-2.5 text-left text-sm transition',
                                         active
-                                            ? 'bg-gray-700 text-white'
-                                            : 'bg-gray-800/60 text-gray-200 hover:bg-gray-800',
+                                            ? 'bg-slate-700 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]'
+                                            : 'bg-transparent text-slate-300 hover:bg-slate-800/70',
                                     ].join(' ')}
                                 >
                                     <div className="flex items-start justify-between gap-2">
                                         <p className="truncate font-medium">{session.title || '未命名会话'}</p>
-                                        <div className="flex shrink-0 items-center gap-1">
+                                        <div className="flex shrink-0 items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity">
                                             <button
                                                 type="button"
                                                 onClick={(event) => handlePin(event, session.id)}
@@ -131,7 +134,7 @@ export default function Sidebar({ className = '', onAfterSelect }) {
                                                 type="button"
                                                 onClick={(event) => handleRename(event, session)}
                                                 aria-label="重命名会话"
-                                                className="rounded px-1 text-[10px] text-gray-300 hover:bg-gray-600/60"
+                                                className="rounded px-1 text-[10px] text-slate-300 hover:bg-slate-600/60"
                                             >
                                                 改
                                             </button>
@@ -155,21 +158,31 @@ export default function Sidebar({ className = '', onAfterSelect }) {
                     })}
 
                     {filteredSessions.length === 0 && (
-                        <li className="rounded-lg bg-gray-800/40 px-3 py-2 text-xs text-gray-400">
+                        <li className="rounded-xl bg-slate-800/40 px-3 py-2 text-xs text-slate-400">
                             未找到匹配会话
                         </li>
                     )}
                 </ul>
             </div>
 
-            <div className="border-t border-gray-800 p-3">
-                <button
-                    type="button"
-                    onClick={toggleSettings}
-                    className="w-full rounded-lg bg-gray-800 px-3 py-2 text-sm font-medium text-gray-100 transition hover:bg-gray-700"
-                >
-                    ⚙️ 设置
-                </button>
+            <div className="border-t border-slate-800 p-3">
+                <div className="grid grid-cols-2 gap-2">
+                    <button
+                        type="button"
+                        onClick={toggleSettings}
+                        className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700"
+                    >
+                        设置
+                    </button>
+                    <button
+                        type="button"
+                        onClick={exportCurrentSessionMarkdown}
+                        disabled={isExporting}
+                        className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        {isExporting ? '导出中...' : '导出 MD'}
+                    </button>
+                </div>
             </div>
         </aside>
     );

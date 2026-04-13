@@ -40,7 +40,7 @@ function Row({ index, style, data }) {
 
     return (
         <div style={style}>
-            <div ref={rowRef}>
+            <div ref={rowRef} className="mx-auto w-full max-w-4xl px-1 sm:px-3">
                 <MessageItem message={message} />
             </div>
         </div>
@@ -175,11 +175,11 @@ export default function ChatList() {
     return (
         <div ref={containerRef} className="relative h-full w-full overflow-hidden">
             {isSessionLoading && (
-                <div className="absolute inset-0 z-10 space-y-3 bg-slate-50/90 px-6 py-5 backdrop-blur-[1px]">
+                <div className="absolute inset-0 z-10 space-y-3 bg-[var(--app-bg)]/90 px-6 py-5 backdrop-blur-[2px]">
                     {[1, 2, 3, 4].map((item) => (
                         <div
                             key={item}
-                            className="h-12 w-full animate-pulse rounded-2xl bg-slate-200"
+                            className="mx-auto h-12 w-full max-w-4xl animate-pulse rounded-2xl bg-[var(--panel-soft)]"
                         />
                     ))}
                 </div>
@@ -205,7 +205,7 @@ export default function ChatList() {
                 <button
                     type="button"
                     onClick={scrollToBottom}
-                    className="absolute bottom-4 right-4 z-20 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-lg transition hover:bg-slate-50"
+                    className="absolute bottom-4 right-4 z-20 rounded-full border border-[var(--panel-border)] bg-[var(--panel-bg)] px-3 py-2 text-xs font-semibold text-[var(--text-main)] shadow-md transition hover:opacity-95"
                 >
                     回到底部
                 </button>

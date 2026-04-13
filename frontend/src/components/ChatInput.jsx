@@ -222,10 +222,10 @@ export default function ChatInput() {
     };
 
     return (
-        <div className="border-t border-gray-200 bg-white/95 px-4 pb-4 pt-3 shadow-[0_-8px_20px_rgba(15,23,42,0.08)] backdrop-blur">
-            <div>
+        <div className="border-t border-[var(--panel-border)] bg-[var(--app-bg)]/95 px-2 pb-3 pt-3 backdrop-blur sm:px-4 sm:pb-4">
+            <div className="mx-auto w-full max-w-4xl">
                 {isTyping && (
-                    <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs text-blue-700">
+                    <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-[var(--panel-border)] bg-[var(--panel-bg)] px-3 py-1 text-xs text-[var(--text-muted)]">
                         <span>AI 正在思考</span>
                         <span className="inline-flex items-center gap-1">
                             <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500 [animation-delay:0ms]" />
@@ -236,7 +236,7 @@ export default function ChatInput() {
                 )}
 
                 {!isTyping && lastFailedUserMessage && (
-                    <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-700">
+                    <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
                         <span>上次发送失败</span>
                         <button
                             type="button"
@@ -249,109 +249,124 @@ export default function ChatInput() {
                 )}
 
                 {uploadStatus && (
-                    <div className="mb-2 inline-flex max-w-full rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">
+                    <div className="mb-2 inline-flex max-w-full rounded-full border border-[var(--panel-border)] bg-[var(--panel-bg)] px-3 py-1 text-xs text-[var(--text-muted)]">
                         <span className="truncate">{uploadStatus}</span>
                     </div>
                 )}
 
                 {selectedImage && (
-                    <div className="mb-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                    <div className="mb-3 flex items-start gap-2 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-2">
                         <img
                             src={selectedImage.previewUrl}
                             alt="已选择图片"
-                            className="h-20 w-20 rounded-lg border border-slate-200 object-cover"
+                            className="h-16 w-16 rounded-lg border border-[var(--panel-border)] object-cover sm:h-20 sm:w-20"
                         />
                         <button
                             type="button"
                             onClick={handleClearImage}
-                            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 transition hover:bg-slate-100"
+                            className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-2 py-1 text-xs text-[var(--text-main)] transition hover:opacity-95"
                         >
                             X
                         </button>
                     </div>
                 )}
 
-                <div className="flex items-end gap-3">
-                    <button
-                        type="button"
-                        onClick={handleUploadClick}
-                        className="h-11 w-11 shrink-0 rounded-xl border border-gray-300 bg-white text-base text-slate-700 transition hover:bg-slate-50"
-                        title="上传 txt 或 md 文档"
-                    >
-                        📁
-                    </button>
-                    <input
-                        ref={docFileInputRef}
-                        type="file"
-                        accept=".txt,.md"
-                        className="hidden"
-                        onChange={handleFileChange}
-                    />
+                <div className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-2.5 shadow-[0_12px_30px_rgba(15,23,42,0.06)] dark:shadow-[0_12px_30px_rgba(0,0,0,0.35)]">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={handleUploadClick}
+                            className="h-9 w-9 shrink-0 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] text-base text-[var(--text-main)] transition hover:opacity-95"
+                            title="上传 txt 或 md 文档"
+                        >
+                            <svg viewBox="0 0 24 24" className="mx-auto h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                                <path d="M3 7.5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7.5Z" />
+                            </svg>
+                            <span className="sr-only">上传文档</span>
+                        </button>
+                        <input
+                            ref={docFileInputRef}
+                            type="file"
+                            accept=".txt,.md"
+                            className="hidden"
+                            onChange={handleFileChange}
+                        />
 
-                    <button
-                        type="button"
-                        onClick={handleImageUploadClick}
-                        className="h-11 w-11 shrink-0 rounded-xl border border-gray-300 bg-white text-base text-slate-700 transition hover:bg-slate-50"
-                        title="上传图片"
-                    >
-                        🖼️
-                    </button>
-                    <input
-                        ref={imageFileInputRef}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={handleImageChange}
-                    />
+                        <button
+                            type="button"
+                            onClick={handleImageUploadClick}
+                            className="h-9 w-9 shrink-0 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] text-base text-[var(--text-main)] transition hover:opacity-95"
+                            title="上传图片"
+                        >
+                            <svg viewBox="0 0 24 24" className="mx-auto h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                                <rect x="3.5" y="5" width="17" height="14" rx="2" />
+                                <circle cx="9" cy="10" r="1.5" />
+                                <path d="m20.5 16-4.2-4.2a1 1 0 0 0-1.4 0L9 17.7" />
+                            </svg>
+                            <span className="sr-only">上传图片</span>
+                        </button>
+                        <input
+                            ref={imageFileInputRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={handleImageChange}
+                        />
 
-                    <button
-                        type="button"
-                        onClick={handleVoiceInput}
-                        className={`h-11 w-11 shrink-0 rounded-xl border border-gray-300 bg-white text-base text-slate-700 transition hover:bg-slate-50 ${isListening ? 'animate-pulse text-red-500' : ''}`}
-                        title="语音输入"
-                    >
-                        🎤
-                    </button>
+                        <button
+                            type="button"
+                            onClick={handleVoiceInput}
+                            className={`h-9 w-9 shrink-0 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] text-base text-[var(--text-main)] transition hover:opacity-95 ${isListening ? 'animate-pulse text-red-500' : ''}`}
+                            title="语音输入"
+                        >
+                            <svg viewBox="0 0 24 24" className="mx-auto h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                                <rect x="9" y="3" width="6" height="11" rx="3" />
+                                <path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6" />
+                            </svg>
+                            <span className="sr-only">语音输入</span>
+                        </button>
 
-                    <textarea
-                        ref={textareaRef}
-                        className="min-h-12 max-h-40 flex-1 resize-none rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-                        placeholder="请输入你的问题，Enter 发送，Shift+Enter 换行"
-                        value={value}
-                        onChange={(event) => setValue(event.target.value)}
-                        onKeyDown={handleKeyDown}
-                    />
-                    <div className="flex items-center">
                         <button
                             type="button"
                             onClick={() => setEnableWebSearch(!enableWebSearch)}
-                            className={`h-11 rounded-xl border px-3 text-xs font-medium transition outline-none ${enableWebSearch
-                                ? 'border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100'
-                                : 'border-gray-300 bg-white text-slate-700 hover:bg-slate-50'
+                            className={`h-9 rounded-lg border px-3 text-xs font-semibold transition outline-none ${enableWebSearch
+                                ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-100'
+                                : 'border-[var(--panel-border)] bg-[var(--panel-soft)] text-[var(--text-muted)]'
                                 }`}
                             title="是否启用联网搜索"
                         >
                             联网: {enableWebSearch ? '开' : '关'}
                         </button>
                     </div>
-                    <button
-                        type="button"
-                        disabled={isTyping}
-                        onClick={handleSend}
-                        className="h-11 rounded-xl bg-blue-500 px-4 text-sm font-medium text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-blue-300"
-                    >
-                        {isTyping ? '思考中...' : '发送'}
-                    </button>
 
-                    {isTyping && (
+                    <div className="flex items-end gap-2 sm:gap-3">
+                        <textarea
+                            ref={textareaRef}
+                            className="min-h-12 max-h-40 flex-1 resize-none rounded-xl border border-[var(--panel-border)] bg-[var(--panel-bg)] px-3 py-2 text-sm text-[var(--text-main)] outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:focus:border-slate-500 dark:focus:ring-slate-700"
+                            placeholder="给 AI 发送消息，Enter 发送，Shift+Enter 换行"
+                            value={value}
+                            onChange={(event) => setValue(event.target.value)}
+                            onKeyDown={handleKeyDown}
+                        />
                         <button
                             type="button"
-                            onClick={stopMessageStream}
-                            className="h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                            disabled={isTyping}
+                            onClick={handleSend}
+                            className="h-11 rounded-xl bg-[#111827] px-4 text-sm font-semibold text-white transition hover:bg-[#0b1220] disabled:cursor-not-allowed disabled:bg-slate-400"
                         >
-                            停止
+                            {isTyping ? '思考中...' : '发送'}
                         </button>
-                    )}
+
+                        {isTyping && (
+                            <button
+                                type="button"
+                                onClick={stopMessageStream}
+                                className="h-11 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-bg)] px-3 text-sm font-medium text-[var(--text-main)] transition hover:opacity-95"
+                            >
+                                停止
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>

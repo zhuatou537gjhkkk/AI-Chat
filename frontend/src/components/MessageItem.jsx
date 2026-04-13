@@ -99,7 +99,7 @@ function CodeRenderer({ inline, className, children, ...props }) {
     if (inline) {
         return (
             <code
-                className="rounded bg-slate-200/80 px-1.5 py-0.5 font-mono text-[0.92em] text-slate-800"
+                className="rounded-md bg-slate-200/80 px-1.5 py-0.5 font-mono text-[0.92em] text-slate-800 dark:bg-slate-700/70 dark:text-slate-100"
                 {...props}
             >
                 {children}
@@ -145,7 +145,7 @@ function CodeRenderer({ inline, className, children, ...props }) {
     const theme = assets?.theme;
 
     return (
-        <div className="my-2 overflow-hidden rounded-xl border border-slate-700/70 bg-slate-900/95 shadow-sm">
+        <div className="my-3 overflow-hidden rounded-xl border border-slate-700/80 bg-[#0f172a] shadow-sm">
             <div className="flex items-center justify-between border-b border-slate-700/80 px-3 py-2 text-xs text-slate-300">
                 <span className="rounded bg-slate-800 px-2 py-0.5 font-mono uppercase tracking-wide text-slate-200">
                     {language}
@@ -221,7 +221,7 @@ function MessageItem({ message }) {
         }
 
         return (
-            <div className="mb-2 rounded-md bg-gray-800 p-2 font-mono text-xs text-green-400">
+            <div className="mb-2 rounded-md bg-gray-800 p-2 font-mono text-xs text-green-400 dark:bg-slate-900 dark:text-emerald-300">
                 {toolLogs.map((log, index) => (
                     <div key={`${log.name}-${index}`} className="whitespace-pre-wrap break-words">
                         {`> 执行工具: ${log.name} ... ${log.status === 'running' ? '⏳' : '✅'}`}
@@ -237,7 +237,7 @@ function MessageItem({ message }) {
         }
 
         return (
-            <details className="mb-2 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs text-indigo-800">
+            <details className="mb-2 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs text-indigo-800 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200">
                 <summary className="cursor-pointer select-none font-medium">思考过程</summary>
                 <div className="mt-2 space-y-1">
                     {thoughtLogs.map((log, index) => (
@@ -258,7 +258,7 @@ function MessageItem({ message }) {
         return (
             <div className="space-y-3">
                 {structuredSearchResult.header && (
-                    <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                    <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
                         {structuredSearchResult.header}
                     </div>
                 )}
@@ -268,10 +268,10 @@ function MessageItem({ message }) {
                     return (
                         <article
                             key={`${item.link || item.title}-${index}`}
-                            className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+                            className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900"
                         >
                             <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-                                <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">{item.time || '未知时间'}</span>
+                                <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700 dark:bg-slate-800 dark:text-slate-200">{item.time || '未知时间'}</span>
                                 <span
                                     className={[
                                         'rounded px-2 py-0.5',
@@ -282,11 +282,11 @@ function MessageItem({ message }) {
                                 >
                                     {item.verification || '待核验'}
                                 </span>
-                                <span className="rounded bg-violet-100 px-2 py-0.5 text-violet-700">{item.site || '未知来源'}</span>
+                                <span className="rounded bg-violet-100 px-2 py-0.5 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200">{item.site || '未知来源'}</span>
                             </div>
 
-                            <h4 className="mb-1 text-sm font-semibold text-slate-900">{item.title || '无标题'}</h4>
-                            <p className="mb-2 whitespace-pre-wrap text-xs text-slate-700">{item.summary || '无摘要'}</p>
+                            <h4 className="mb-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{item.title || '无标题'}</h4>
+                            <p className="mb-2 whitespace-pre-wrap text-xs text-slate-700 dark:text-slate-300">{item.summary || '无摘要'}</p>
 
                             {item.link && item.link !== '无链接' ? (
                                 <a
@@ -298,11 +298,11 @@ function MessageItem({ message }) {
                                     打开来源链接
                                 </a>
                             ) : (
-                                <span className="text-xs text-slate-500">无可用链接</span>
+                                <span className="text-xs text-slate-500 dark:text-slate-400">无可用链接</span>
                             )}
 
                             {item.query && (
-                                <p className="mt-2 text-[11px] text-slate-500">检索词: {item.query}</p>
+                                <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">检索词: {item.query}</p>
                             )}
                         </article>
                     );
@@ -323,7 +323,7 @@ function MessageItem({ message }) {
                     code: CodeRenderer,
                     table({ children }) {
                         return (
-                            <div className="my-3 overflow-x-auto rounded-lg border border-slate-300 bg-white/80">
+                            <div className="my-3 overflow-x-auto rounded-lg border border-slate-300 bg-white/80 dark:border-slate-700 dark:bg-slate-900/70">
                                 <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
                                     {children}
                                 </table>
@@ -331,21 +331,21 @@ function MessageItem({ message }) {
                         );
                     },
                     thead({ children }) {
-                        return <thead className="bg-slate-100/90">{children}</thead>;
+                        return <thead className="bg-slate-100/90 dark:bg-slate-800">{children}</thead>;
                     },
                     tr({ children }) {
-                        return <tr className="border-t border-slate-300">{children}</tr>;
+                        return <tr className="border-t border-slate-300 dark:border-slate-700">{children}</tr>;
                     },
                     th({ children }) {
                         return (
-                            <th className="whitespace-nowrap border border-slate-300 px-3 py-2 font-semibold text-slate-700">
+                            <th className="whitespace-nowrap border border-slate-300 px-3 py-2 font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
                                 {children}
                             </th>
                         );
                     },
                     td({ children }) {
                         return (
-                            <td className="border border-slate-300 px-3 py-2 align-top text-slate-700">
+                            <td className="border border-slate-300 px-3 py-2 align-top text-slate-700 dark:border-slate-700 dark:text-slate-300">
                                 {children}
                             </td>
                         );
@@ -358,58 +358,80 @@ function MessageItem({ message }) {
     };
 
     return (
-        <div className={`flex w-full px-3 py-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
-            <div
-                className={[
-                    'relative max-w-[85%] rounded-2xl px-4 py-2 text-sm leading-6 shadow-sm',
-                    isUser ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-800',
-                ].join(' ')}
-            >
-                {!isUser && (
-                    <button
-                        type="button"
-                        onClick={handleReadMessage}
-                        className={[
-                            'absolute right-2 top-2 rounded-md border px-1.5 py-0.5 text-[11px] transition',
-                            isCurrentMessageSpeaking
-                                ? 'border-red-300 bg-red-50 text-red-600 hover:bg-red-100'
-                                : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100',
-                        ].join(' ')}
-                        title={isCurrentMessageSpeaking ? '停止朗读' : '朗读此消息'}
-                        aria-label={isCurrentMessageSpeaking ? '停止朗读' : '朗读此消息'}
-                    >
-                        {isCurrentMessageSpeaking ? '■ 停止' : '🔊 朗读'}
-                    </button>
-                )}
-                {isUser ? (
-                    <p className="whitespace-pre-wrap break-words">{message.content}</p>
-                ) : (
-                    <div className="break-words pr-7 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-6">
-                        {renderThoughtLogs()}
-                        {renderToolLogs()}
-                        {renderAssistantContent()}
-                    </div>
-                )}
+        <div className={`flex w-full px-1 py-3 sm:px-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
+            <div className={`flex w-full gap-3 ${isUser ? 'max-w-[82%] flex-row-reverse sm:max-w-[76%] lg:max-w-[70%]' : 'max-w-full'}`}>
+                <div
+                    className={[
+                        'mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold',
+                        isUser
+                            ? 'bg-slate-800 text-slate-100 dark:bg-slate-200 dark:text-slate-900'
+                            : 'bg-emerald-600 text-white',
+                    ].join(' ')}
+                    aria-hidden="true"
+                >
+                    {isUser ? '你' : 'AI'}
+                </div>
 
-                <div className={`mt-2 flex items-center gap-2 text-xs ${isUser ? 'justify-end' : 'justify-start'}`}>
-                    <button
-                        type="button"
-                        onClick={handleCopyMessage}
-                        className="rounded border border-slate-300 px-2 py-0.5 text-slate-700 transition hover:bg-slate-100"
-                    >
-                        {copied ? '已复制' : '复制'}
-                    </button>
+                <div
+                    className={[
+                        'group relative min-w-0 text-[15px] leading-7',
+                        isUser
+                            ? 'rounded-[1.45rem] bg-[#2f2f2f] px-4 py-3.5 text-white shadow-[0_8px_20px_rgba(2,6,23,0.2)] dark:bg-[#2f2f2f]'
+                            : 'bg-transparent px-0 py-0 text-[var(--text-main)] shadow-none',
+                    ].join(' ')}
+                >
+                    <p className={`mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] ${isUser ? 'text-slate-200' : 'text-[var(--text-muted)]'}`}>
+                        {isUser ? 'You' : 'Assistant'}
+                    </p>
                     {!isUser && (
-                        <>
-                            <button
-                                type="button"
-                                onClick={() => retryMessageById(message.id)}
-                                className="rounded border border-slate-300 px-2 py-0.5 text-slate-700 transition hover:bg-slate-100"
-                            >
-                                重试
-                            </button>
-                        </>
+                        <button
+                            type="button"
+                            onClick={handleReadMessage}
+                            className={[
+                                'absolute right-0 top-0 rounded-md border px-1.5 py-0.5 text-[11px] transition md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100',
+                                isCurrentMessageSpeaking
+                                    ? 'border-red-300 bg-red-50 text-red-600 hover:bg-red-100'
+                                    : 'border-[var(--panel-border)] bg-[var(--panel-bg)] text-[var(--text-muted)] hover:opacity-95',
+                            ].join(' ')}
+                            title={isCurrentMessageSpeaking ? '停止朗读' : '朗读此消息'}
+                            aria-label={isCurrentMessageSpeaking ? '停止朗读' : '朗读此消息'}
+                        >
+                            {isCurrentMessageSpeaking ? '■ 停止' : '🔊 朗读'}
+                        </button>
                     )}
+                    {isUser ? (
+                        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                    ) : (
+                        <div className="break-words pr-7 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-6">
+                            {renderThoughtLogs()}
+                            {renderToolLogs()}
+                            {renderAssistantContent()}
+                        </div>
+                    )}
+
+                    <div className={`mt-2 flex items-center gap-2 text-xs ${isUser ? 'justify-end' : 'justify-start'}`}>
+                        <button
+                            type="button"
+                            onClick={handleCopyMessage}
+                            className={[
+                                'rounded-lg border border-[var(--panel-border)] bg-[var(--panel-bg)] px-2 py-0.5 text-[var(--text-muted)] transition hover:opacity-95',
+                                isUser ? '' : 'md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100',
+                            ].join(' ')}
+                        >
+                            {copied ? '已复制' : '复制'}
+                        </button>
+                        {!isUser && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => retryMessageById(message.id)}
+                                    className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-bg)] px-2 py-0.5 text-[var(--text-muted)] transition hover:opacity-95 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+                                >
+                                    重试
+                                </button>
+                            </>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>
