@@ -2,6 +2,7 @@ import { memo, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useChatStore } from '../store/chatStore';
+import { playVoice, stopVoice } from '../store/chatStore';
 
 function parseStructuredWebSearchContent(content) {
     const text = String(content || '').trim();
@@ -189,16 +190,11 @@ function MessageItem({ message }) {
     const toolLogs = Array.isArray(message.toolLogs) ? message.toolLogs : [];
     const thoughtLogs = Array.isArray(message.thoughtLogs) ? message.thoughtLogs : [];
     const retryMessageById = useChatStore((state) => state.retryMessageById);
+    const speakingMessageId = useChatStore((state) => state.speakingMessageId);
     const [copied, setCopied] = useState(false);
-    const [isReading, setIsReading] = useState(false);
     const structuredSearchResult =
         message.role === 'assistant' ? parseStructuredWebSearchContent(message.content) : null;
-
-    useEffect(() => () => {
-        if (window.speechSynthesis?.speaking) {
-            window.speechSynthesis.cancel();
-        }
-    }, []);
+    const isCurrentMessageSpeaking = !isUser && speakingMessageId === message.id;
 
     const handleCopyMessage = async () => {
         try {
@@ -210,25 +206,13 @@ function MessageItem({ message }) {
         }
     };
 
-    const handleToggleRead = () => {
-        if (!window.speechSynthesis) {
+    const handleReadMessage = () => {
+        if (isCurrentMessageSpeaking) {
+            stopVoice();
             return;
         }
 
-        if (isReading || window.speechSynthesis.speaking) {
-            window.speechSynthesis.cancel();
-            setIsReading(false);
-            return;
-        }
-
-        const utterance = new SpeechSynthesisUtterance(String(message.content || ''));
-        utterance.lang = 'zh-CN';
-        utterance.rate = 1;
-        utterance.onend = () => setIsReading(false);
-        utterance.onerror = () => setIsReading(false);
-
-        setIsReading(true);
-        window.speechSynthesis.speak(utterance);
+        playVoice(message.content, { messageId: message.id });
     };
 
     const renderToolLogs = () => {
@@ -377,14 +361,30 @@ function MessageItem({ message }) {
         <div className={`flex w-full px-3 py-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
             <div
                 className={[
-                    'max-w-[85%] rounded-2xl px-4 py-2 text-sm leading-6 shadow-sm',
+                    'relative max-w-[85%] rounded-2xl px-4 py-2 text-sm leading-6 shadow-sm',
                     isUser ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-800',
                 ].join(' ')}
             >
+                {!isUser && (
+                    <button
+                        type="button"
+                        onClick={handleReadMessage}
+                        className={[
+                            'absolute right-2 top-2 rounded-md border px-1.5 py-0.5 text-[11px] transition',
+                            isCurrentMessageSpeaking
+                                ? 'border-red-300 bg-red-50 text-red-600 hover:bg-red-100'
+                                : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100',
+                        ].join(' ')}
+                        title={isCurrentMessageSpeaking ? '停止朗读' : '朗读此消息'}
+                        aria-label={isCurrentMessageSpeaking ? '停止朗读' : '朗读此消息'}
+                    >
+                        {isCurrentMessageSpeaking ? '■ 停止' : '🔊 朗读'}
+                    </button>
+                )}
                 {isUser ? (
                     <p className="whitespace-pre-wrap break-words">{message.content}</p>
                 ) : (
-                    <div className="break-words [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-6">
+                    <div className="break-words pr-7 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-6">
                         {renderThoughtLogs()}
                         {renderToolLogs()}
                         {renderAssistantContent()}
@@ -401,13 +401,6 @@ function MessageItem({ message }) {
                     </button>
                     {!isUser && (
                         <>
-                            <button
-                                type="button"
-                                onClick={handleToggleRead}
-                                className="rounded border border-slate-300 px-2 py-0.5 text-slate-700 transition hover:bg-slate-100"
-                            >
-                                {isReading ? '停止朗读' : '朗读'}
-                            </button>
                             <button
                                 type="button"
                                 onClick={() => retryMessageById(message.id)}

@@ -19,6 +19,135 @@ const initialMessage = {
 const DEFAULT_SESSION_TITLE = '新对话';
 const DEFAULT_SYSTEM_PROMPT = '你是一个有用的 AI 助手。';
 const DEFAULT_TEMPERATURE = 0.7;
+const DEFAULT_VOICE_RATE = 1;
+const DEFAULT_VOICE_VOLUME = 1;
+
+function sanitizeSpeechText(text) {
+    const source = String(text || '');
+
+    return source
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/`([^`]*)`/g, '$1')
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+        .replace(/^[\s>*#-]+/gm, '')
+        .replace(/[>*#`*_~]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+export function playVoice(text, options = {}) {
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+        return;
+    }
+
+    const cleanText = sanitizeSpeechText(text);
+    if (!cleanText) {
+        return;
+    }
+
+    const state = useChatStore.getState?.();
+    const messageId = options?.messageId || null;
+    const nextRate = normalizeVoiceRate(state?.voiceRate);
+    const nextVolume = normalizeVoiceVolume(state?.voiceVolume);
+    const nextVoiceName = state?.voiceName || '';
+
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'zh-CN';
+    utterance.rate = nextRate;
+    utterance.volume = nextVolume;
+
+    const resolvedVoice = resolveVoiceByName(nextVoiceName);
+    if (resolvedVoice) {
+        utterance.voice = resolvedVoice;
+        utterance.lang = resolvedVoice.lang || 'zh-CN';
+    }
+
+    if (useChatStore.setState) {
+        useChatStore.setState({ speakingMessageId: messageId });
+    }
+
+    utterance.onend = () => {
+        const latest = useChatStore.getState?.();
+        if (!useChatStore.setState) {
+            return;
+        }
+
+        if ((latest?.speakingMessageId || null) === messageId) {
+            useChatStore.setState({ speakingMessageId: null });
+        }
+    };
+
+    utterance.onerror = () => {
+        const latest = useChatStore.getState?.();
+        if (!useChatStore.setState) {
+            return;
+        }
+
+        if ((latest?.speakingMessageId || null) === messageId) {
+            useChatStore.setState({ speakingMessageId: null });
+        }
+    };
+
+    window.speechSynthesis.speak(utterance);
+}
+
+export function stopVoice() {
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+        return;
+    }
+
+    window.speechSynthesis.cancel();
+
+    if (useChatStore.setState) {
+        useChatStore.setState({ speakingMessageId: null });
+    }
+}
+
+function normalizeVoiceRate(rate) {
+    const value = Number(rate);
+    if (!Number.isFinite(value)) {
+        return DEFAULT_VOICE_RATE;
+    }
+
+    return Math.max(0.5, Math.min(2, value));
+}
+
+function normalizeVoiceVolume(volume) {
+    const value = Number(volume);
+    if (!Number.isFinite(value)) {
+        return DEFAULT_VOICE_VOLUME;
+    }
+
+    return Math.max(0, Math.min(1, value));
+}
+
+function resolveVoiceByName(voiceName) {
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+        return null;
+    }
+
+    const voices = window.speechSynthesis.getVoices() || [];
+    if (voices.length === 0) {
+        return null;
+    }
+
+    if (voiceName) {
+        const matched = voices.find((voice) => voice.name === voiceName);
+        if (matched) {
+            return matched;
+        }
+    }
+
+    const zhVoice = voices.find((voice) => String(voice.lang || '').toLowerCase().startsWith('zh'));
+    if (zhVoice) {
+        return zhVoice;
+    }
+
+    return null;
+}
 
 function normalizeTemperatureValue(temp) {
     const value = Number(temp);
@@ -89,6 +218,11 @@ export const useChatStore = create(persist((set, get) => ({
     temperature: DEFAULT_TEMPERATURE,
     sessionAgentSettings: {},
     isSettingsOpen: false,
+    isVoiceEnabled: false,
+    voiceRate: DEFAULT_VOICE_RATE,
+    voiceVolume: DEFAULT_VOICE_VOLUME,
+    voiceName: '',
+    speakingMessageId: null,
     setEnableWebSearch: (enabled) => {
         set((state) => {
             const nextValue = typeof enabled === 'function'
@@ -174,6 +308,18 @@ export const useChatStore = create(persist((set, get) => ({
     },
     toggleSettings: () => {
         set((state) => ({ isSettingsOpen: !state.isSettingsOpen }));
+    },
+    toggleVoice: () => {
+        set((state) => ({ isVoiceEnabled: !state.isVoiceEnabled }));
+    },
+    setVoiceRate: (rate) => {
+        set({ voiceRate: normalizeVoiceRate(rate) });
+    },
+    setVoiceVolume: (volume) => {
+        set({ voiceVolume: normalizeVoiceVolume(volume) });
+    },
+    setVoiceName: (voiceName) => {
+        set({ voiceName: String(voiceName || '') });
     },
     initSessions: async () => {
         const state = get();
@@ -733,6 +879,20 @@ export const useChatStore = create(persist((set, get) => ({
                     return;
                 }
 
+                const finalAssistantContent = (() => {
+                    for (let i = latest.messages.length - 1; i >= 0; i -= 1) {
+                        if (latest.messages[i].role === 'assistant') {
+                            return latest.messages[i].content || '';
+                        }
+                    }
+
+                    return '';
+                })();
+
+                if (latest.isVoiceEnabled && finalAssistantContent) {
+                    playVoice(finalAssistantContent, { messageId: assistantMessageId });
+                }
+
                 set({
                     isTyping: false,
                     activeAbortController: null,
@@ -795,5 +955,9 @@ export const useChatStore = create(persist((set, get) => ({
     partialize: (state) => ({
         sessionAgentSettings: state.sessionAgentSettings,
         enableWebSearch: state.enableWebSearch,
+        isVoiceEnabled: state.isVoiceEnabled,
+        voiceRate: state.voiceRate,
+        voiceVolume: state.voiceVolume,
+        voiceName: state.voiceName,
     }),
 }));
