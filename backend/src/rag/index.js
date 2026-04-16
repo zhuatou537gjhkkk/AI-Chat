@@ -44,8 +44,8 @@ const upload = multer({
 });
 
 const embeddings = new OpenAIEmbeddings({
-    modelName: process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-v1",
-    model: process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-v1",
+    modelName: process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-v2",
+    model: process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-v2",
     batchSize: EMBED_BATCH_SIZE,
     configuration: {
         apiKey: process.env.OPENAI_API_KEY || process.env.DASHSCOPE_API_KEY,
