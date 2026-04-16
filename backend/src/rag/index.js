@@ -7,9 +7,11 @@ import { FaissStore } from "@langchain/community/vectorstores/faiss";
 
 let vectorStore = null;
 let latestUploadedSource = null;
+export let activeLargeFile = null;
 const knowledgeChunks = [];
 const knowledgeMetadatas = [];
 const indexedFiles = new Set();
+const LARGE_FILE_THRESHOLD_BYTES = 500 * 1024;
 const DEFAULT_TOP_K = 5;
 const DEFAULT_RETURN_K = 3;
 const DEFAULT_MAX_SCORE = Number(
@@ -74,6 +76,27 @@ export async function processAndStoreDocument(fileBuffer, fileName) {
         throw new Error("empty document");
     }
 
+    latestUploadedSource = fileName;
+
+    if (fileBuffer.length > LARGE_FILE_THRESHOLD_BYTES) {
+        indexedFiles.add(fileName);
+        activeLargeFile = {
+            fileName,
+            content: text,
+            sizeBytes: fileBuffer.length,
+            updatedAt: new Date().toISOString()
+        };
+
+        return {
+            fileName,
+            mode: "long_context",
+            sizeBytes: fileBuffer.length,
+            totalFiles: indexedFiles.size
+        };
+    }
+
+    activeLargeFile = null;
+
     const splitter = new RecursiveCharacterTextSplitter({
         chunkSize: 500,
         chunkOverlap: 50
@@ -94,7 +117,6 @@ export async function processAndStoreDocument(fileBuffer, fileName) {
     knowledgeChunks.push(...chunks);
     knowledgeMetadatas.push(...metadata);
     indexedFiles.add(fileName);
-    latestUploadedSource = fileName;
 
     const documents = chunks.map((chunk, index) => ({
         pageContent: chunk,
@@ -113,6 +135,7 @@ export async function processAndStoreDocument(fileBuffer, fileName) {
 
     return {
         fileName,
+        mode: "vector",
         chunkCount: chunks.length,
         totalChunks: knowledgeChunks.length,
         totalFiles: indexedFiles.size

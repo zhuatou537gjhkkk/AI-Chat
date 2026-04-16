@@ -389,16 +389,229 @@ export async function fetchChatStream(sessionId, message, onChunk, onToolEvent, 
     }
 }
 
-export async function uploadFile(file) {
-    const formData = new FormData();
-    formData.append('file', file);
+export async function uploadFile(file, options = {}) {
+    const { onProgress } = options;
+    const CHUNK_SIZE = 4 * 1024 * 1024;
+    const LARGE_FILE_THRESHOLD = 500 * 1024;
+    const DOC_UPLOAD_RETRY_COUNT = 2;
+    const RESUME_KEY_PREFIX = 'chunk-upload-resume:';
 
-    const response = await request('/upload', {
+    const emitProgress = (loaded, total) => {
+        if (typeof onProgress !== 'function' || !Number.isFinite(total) || total <= 0) {
+            return;
+        }
+
+        const safeLoaded = Math.max(0, Math.min(total, loaded));
+        onProgress({
+            loaded: safeLoaded,
+            total,
+            percentage: Math.round((safeLoaded / total) * 100),
+        });
+    };
+
+    const readResumeState = (resumeKey) => {
+        if (typeof window === 'undefined') {
+            return null;
+        }
+
+        try {
+            const raw = window.localStorage.getItem(resumeKey);
+            if (!raw) {
+                return null;
+            }
+
+            return JSON.parse(raw);
+        } catch {
+            return null;
+        }
+    };
+
+    const writeResumeState = (resumeKey, state) => {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        window.localStorage.setItem(resumeKey, JSON.stringify(state || {}));
+    };
+
+    const clearResumeState = (resumeKey) => {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        window.localStorage.removeItem(resumeKey);
+    };
+
+    const toHex = (arrayBuffer) => {
+        const bytes = new Uint8Array(arrayBuffer);
+        return Array.from(bytes)
+            .map((byte) => byte.toString(16).padStart(2, '0'))
+            .join('');
+    };
+
+    const computeFileHash = async (targetFile) => {
+        const buffer = await targetFile.arrayBuffer();
+
+        if (globalThis.crypto?.subtle) {
+            const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer);
+            return toHex(digest);
+        }
+
+        let hash = 2166136261;
+        const view = new Uint8Array(buffer);
+        for (const byte of view) {
+            hash ^= byte;
+            hash = Math.imul(hash, 16777619);
+        }
+
+        return `fallback-${targetFile.size}-${hash >>> 0}`;
+    };
+
+    const uploadSingleChunk = async (hash, chunkIndex, chunkBlob, totalChunks) => {
+        const formData = new FormData();
+        formData.append('chunk', chunkBlob, `${file.name}.part.${chunkIndex}`);
+        formData.append('hash', hash);
+        formData.append('chunkIndex', String(chunkIndex));
+        formData.append('fileName', file.name);
+        formData.append('totalChunks', String(totalChunks));
+
+        const response = await request('/upload/chunk', {
+            method: 'POST',
+            body: formData,
+        }, {
+            retryCount: 0,
+        });
+
+        return response.json();
+    };
+
+    const uploadSingleChunkWithRetry = async (hash, chunkIndex, chunkBlob, totalChunks) => {
+        for (let attempt = 0; attempt <= DOC_UPLOAD_RETRY_COUNT; attempt += 1) {
+            try {
+                return await uploadSingleChunk(hash, chunkIndex, chunkBlob, totalChunks);
+            } catch (error) {
+                if (attempt >= DOC_UPLOAD_RETRY_COUNT) {
+                    throw error;
+                }
+            }
+        }
+
+        throw new Error('chunk upload failed');
+    };
+
+    if (!file || typeof file.slice !== 'function') {
+        throw new Error('invalid file');
+    }
+
+    if (file.size <= LARGE_FILE_THRESHOLD) {
+        emitProgress(0, file.size);
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await request('/upload', {
+            method: 'POST',
+            body: formData,
+        });
+
+        emitProgress(file.size, file.size);
+        return response.json();
+    }
+
+    const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+    const fileHash = await computeFileHash(file);
+    const resumeKey = `${RESUME_KEY_PREFIX}${fileHash}`;
+    const resumedState = readResumeState(resumeKey);
+    const checkPayload = {
+        hash: fileHash,
+        fileName: file.name,
+        totalChunks,
+    };
+
+    const checkResponse = await request('/upload/check', {
         method: 'POST',
-        body: formData,
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(checkPayload),
+    }, {
+        retryCount: 0,
+    });
+    const checkData = await checkResponse.json();
+
+    if (checkData?.data?.uploaded === true) {
+        clearResumeState(resumeKey);
+        emitProgress(file.size, file.size);
+        return {
+            ok: true,
+            message: 'document indexed',
+            data: {
+                fileName: file.name,
+                hash: fileHash,
+                mode: 'already_uploaded',
+            },
+        };
+    }
+
+    const uploadedSet = new Set([
+        ...(Array.isArray(checkData?.data?.uploadedChunks) ? checkData.data.uploadedChunks : []),
+        ...(Array.isArray(resumedState?.uploadedChunks) ? resumedState.uploadedChunks : []),
+    ]);
+    let uploadedBytes = 0;
+
+    for (const index of uploadedSet) {
+        if (!Number.isInteger(index) || index < 0 || index >= totalChunks) {
+            continue;
+        }
+
+        const start = index * CHUNK_SIZE;
+        const end = Math.min(file.size, start + CHUNK_SIZE);
+        uploadedBytes += Math.max(0, end - start);
+    }
+
+    emitProgress(uploadedBytes, file.size);
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+        if (uploadedSet.has(chunkIndex)) {
+            continue;
+        }
+
+        const start = chunkIndex * CHUNK_SIZE;
+        const end = Math.min(file.size, start + CHUNK_SIZE);
+        const chunkBlob = file.slice(start, end);
+
+        await uploadSingleChunkWithRetry(fileHash, chunkIndex, chunkBlob, totalChunks);
+
+        uploadedSet.add(chunkIndex);
+        uploadedBytes += chunkBlob.size;
+
+        writeResumeState(resumeKey, {
+            hash: fileHash,
+            uploadedChunks: Array.from(uploadedSet).sort((a, b) => a - b),
+            updatedAt: Date.now(),
+        });
+
+        emitProgress(uploadedBytes, file.size);
+    }
+
+    const completeResponse = await request('/upload/merge', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            hash: fileHash,
+            fileName: file.name,
+            totalChunks,
+        }),
+    }, {
+        retryCount: 0,
+        timeoutMs: Math.max(DEFAULT_TIMEOUT_MS, 3 * 60 * 1000),
     });
 
-    return response.json();
+    clearResumeState(resumeKey);
+    emitProgress(file.size, file.size);
+
+    return completeResponse.json();
 }
 
 export async function uploadImage(file, options = {}) {

@@ -19,7 +19,11 @@ function estimateTokens(text) {
     return Math.max(1, Math.ceil(source.length / 4));
 }
 
-function resolveModelName(hasImage = false) {
+function resolveModelName(hasImage = false, forceModel = null) {
+    if (forceModel) {
+        return forceModel;
+    }
+
     if (hasImage) {
         // 视觉模式建议将环境变量切换为支持多模态的模型，如 qwen-vl-max 或 qwen-vl-plus。
         return process.env.QWEN_VISION_MODEL || process.env.OPENAI_MODEL || "qwen-vl-plus";
@@ -181,11 +185,12 @@ async function streamDirectChat({
     formattedHistory,
     res,
     systemInstruction,
-    temperature
+    temperature,
+    forceModel
 }) {
     const hasImage = Boolean(image);
     const llm = new ChatOpenAI({
-        modelName: resolveModelName(hasImage),
+        modelName: resolveModelName(hasImage, forceModel),
         temperature,
         streaming: true
     });
@@ -217,6 +222,7 @@ export async function chatWithStream(userId, session_id, userMessage, image, sys
         enableWebSearch = false,
         skipUserMessageSave = false,
         userMessageForStorage,
+        forceModel = null,
         onComplete,
     } = options;
     const normalizedUserMessage = String(userMessage || "");
@@ -224,7 +230,7 @@ export async function chatWithStream(userId, session_id, userMessage, image, sys
     const systemPrompt = resolveSystemPrompt(systemPromptInput);
     const hasImage = Boolean(image);
     const startedAt = Date.now();
-    const modelName = resolveModelName(hasImage);
+    const modelName = resolveModelName(hasImage, forceModel);
 
     if (!skipUserMessageSave) {
         saveMessage(userId, session_id, "user", userMessageForStorage ?? normalizedUserMessage);
@@ -246,7 +252,7 @@ export async function chatWithStream(userId, session_id, userMessage, image, sys
 
     let fullText = "";
     let inputForAgent = normalizedUserMessage;
-    const shouldBypassTools = isCreativeTask(normalizedUserMessage, systemPrompt) || hasImage;
+    const shouldBypassTools = isCreativeTask(normalizedUserMessage, systemPrompt) || hasImage || Boolean(forceModel);
 
     try {
         emitThought(res, "正在分析你的问题");
@@ -260,7 +266,8 @@ export async function chatWithStream(userId, session_id, userMessage, image, sys
                 formattedHistory,
                 res,
                 systemInstruction: directSystemInstruction,
-                temperature
+                temperature,
+                forceModel
             });
 
             const assistantMessageId = saveMessage(userId, session_id, "assistant", fullText);

@@ -2,6 +2,9 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import multer from "multer";
+import fs from "fs";
+import path from "path";
+import fse from "fs-extra";
 import {
     initDB,
     saveMessage,
@@ -26,7 +29,8 @@ import {
     uploadMiddleware,
     processAndStoreDocument,
     retrieveKnowledgeEvidence,
-    getLatestUploadedSource
+    getLatestUploadedSource,
+    activeLargeFile
 } from "./rag/index.js";
 import { saveUploadedImage, getUploadedImageDataUrl } from "./images/store.js";
 import {
@@ -39,6 +43,23 @@ import {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const CHUNK_UPLOAD_ROOT = path.join(process.cwd(), "tmp", "chunks");
+const MERGED_UPLOAD_ROOT = path.join(process.cwd(), "tmp", "merged");
+const LONG_CONTEXT_MODEL = process.env.QWEN_LONG_CONTEXT_MODEL || "qwen-long";
+const LARGE_FILE_SEGMENT_SIZE = Number(process.env.LARGE_FILE_SEGMENT_SIZE || 1800);
+const LARGE_FILE_SEGMENT_OVERLAP = Number(process.env.LARGE_FILE_SEGMENT_OVERLAP || 240);
+const LARGE_FILE_MAX_SEGMENTS = Number(process.env.LARGE_FILE_MAX_SEGMENTS || 16);
+const LARGE_FILE_MAX_CONTEXT_CHARS = Number(process.env.LARGE_FILE_MAX_CONTEXT_CHARS || 120000);
+let largeFileSegmentCache = {
+    key: "",
+    segments: []
+};
+const chunkUploadMiddleware = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 8 * 1024 * 1024,
+    },
+}).single("chunk");
 const imageUploadMiddleware = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -101,6 +122,195 @@ function isKnowledgeIntent(input) {
 function refersToLatestUpload(input) {
     const text = String(input || "");
     return /我上传的这个|刚上传|这个文件|这份文件|当前上传/.test(text);
+}
+
+function sanitizeUploadFileName(fileName) {
+    return path.basename(String(fileName || "")).replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function buildMergedFilePath(hash, fileName) {
+    const safeName = sanitizeUploadFileName(fileName || `${hash}.txt`);
+    return path.join(MERGED_UPLOAD_ROOT, `${hash}-${safeName}`);
+}
+
+async function appendChunkToStream(writeStream, chunkPath) {
+    await new Promise((resolve, reject) => {
+        const readStream = fs.createReadStream(chunkPath);
+        readStream.on("error", reject);
+        writeStream.on("error", reject);
+        readStream.on("end", resolve);
+        readStream.pipe(writeStream, { end: false });
+    });
+}
+
+function mentionsActiveLargeFile(input, largeFile) {
+    if (!largeFile?.content) {
+        return false;
+    }
+
+    const text = String(input || "").toLowerCase();
+    const fileName = String(largeFile.fileName || "").toLowerCase();
+
+    if (fileName && text.includes(fileName)) {
+        return true;
+    }
+
+    return /我上传的这个|刚上传|这个文件|这份文件|当前上传|这篇长文|整份文档|全文/.test(text);
+}
+
+function normalizeSegmentSize(size) {
+    if (!Number.isFinite(size) || size < 200) {
+        return 1800;
+    }
+
+    return Math.floor(size);
+}
+
+function normalizeSegmentOverlap(overlap, segmentSize) {
+    if (!Number.isFinite(overlap) || overlap < 0) {
+        return 240;
+    }
+
+    return Math.min(Math.floor(overlap), Math.floor(segmentSize / 2));
+}
+
+function splitLargeFileContent(content) {
+    const text = String(content || "");
+    const segmentSize = normalizeSegmentSize(LARGE_FILE_SEGMENT_SIZE);
+    const overlap = normalizeSegmentOverlap(LARGE_FILE_SEGMENT_OVERLAP, segmentSize);
+    const stride = Math.max(1, segmentSize - overlap);
+    const segments = [];
+
+    for (let start = 0; start < text.length; start += stride) {
+        const end = Math.min(text.length, start + segmentSize);
+        const segmentText = text.slice(start, end).trim();
+        if (!segmentText) {
+            continue;
+        }
+
+        segments.push({
+            index: segments.length,
+            start,
+            end,
+            text: segmentText
+        });
+
+        if (end >= text.length) {
+            break;
+        }
+    }
+
+    return segments;
+}
+
+function getCachedLargeFileSegments(largeFile) {
+    const cacheKey = `${String(largeFile?.fileName || "")}:${String(largeFile?.updatedAt || "")}:${Number(largeFile?.sizeBytes || 0)}`;
+
+    if (cacheKey && largeFileSegmentCache.key === cacheKey && largeFileSegmentCache.segments.length > 0) {
+        return largeFileSegmentCache.segments;
+    }
+
+    const segments = splitLargeFileContent(largeFile?.content || "");
+    largeFileSegmentCache = {
+        key: cacheKey,
+        segments
+    };
+
+    return segments;
+}
+
+function extractQueryTerms(input) {
+    const source = String(input || "").toLowerCase();
+    const terms = source.match(/[\u4e00-\u9fa5]{2,}|[a-z0-9_]{3,}/g) || [];
+    const stopTerms = new Set([
+        "这个", "那个", "这份", "文件", "文档", "全文", "解析", "分析", "总结", "请问", "帮我", "上传"
+    ]);
+
+    return Array.from(new Set(terms.filter((term) => !stopTerms.has(term))));
+}
+
+function scoreSegmentByTerms(segmentText, terms) {
+    if (!terms.length) {
+        return 0;
+    }
+
+    const text = String(segmentText || "").toLowerCase();
+    let score = 0;
+
+    for (const term of terms) {
+        if (!term) {
+            continue;
+        }
+
+        let index = text.indexOf(term);
+        while (index !== -1) {
+            score += term.length >= 4 ? 3 : 2;
+            index = text.indexOf(term, index + term.length);
+        }
+    }
+
+    return score;
+}
+
+function buildLargeFileContext(largeFile, query) {
+    const segments = getCachedLargeFileSegments(largeFile);
+    if (segments.length === 0) {
+        return {
+            contextText: "",
+            selectedCount: 0,
+            selectedChars: 0,
+            totalSegments: 0
+        };
+    }
+
+    const terms = extractQueryTerms(query);
+    const scored = segments
+        .map((segment) => ({
+            ...segment,
+            score: scoreSegmentByTerms(segment.text, terms)
+        }))
+        .sort((a, b) => {
+            if (b.score !== a.score) {
+                return b.score - a.score;
+            }
+
+            return a.index - b.index;
+        });
+
+    const pickCandidates = scored.filter((item) => item.score > 0);
+    const candidates = pickCandidates.length > 0 ? pickCandidates : scored.slice(0, LARGE_FILE_MAX_SEGMENTS);
+
+    const selected = [];
+    let totalChars = 0;
+    for (const item of candidates) {
+        if (selected.length >= LARGE_FILE_MAX_SEGMENTS) {
+            break;
+        }
+
+        const block = `片段#${item.index + 1} (字符 ${item.start}-${item.end})\n${item.text}`;
+        if (totalChars + block.length > LARGE_FILE_MAX_CONTEXT_CHARS) {
+            break;
+        }
+
+        selected.push(block);
+        totalChars += block.length;
+    }
+
+    if (selected.length === 0) {
+        const fallback = scored[0];
+        if (fallback) {
+            const fallbackBlock = `片段#${fallback.index + 1} (字符 ${fallback.start}-${fallback.end})\n${fallback.text.slice(0, LARGE_FILE_MAX_CONTEXT_CHARS)}`;
+            selected.push(fallbackBlock);
+            totalChars = fallbackBlock.length;
+        }
+    }
+
+    return {
+        contextText: selected.join("\n\n"),
+        selectedCount: selected.length,
+        selectedChars: totalChars,
+        totalSegments: segments.length
+    };
 }
 
 function sendSseText(res, text) {
@@ -432,6 +642,206 @@ app.post("/upload", requireAuth, uploadMiddleware, async (req, res) => {
     }
 });
 
+app.post("/upload/check", requireAuth, async (req, res) => {
+    try {
+        const { hash, totalChunks, fileName } = req.body || {};
+        const normalizedHash = String(hash || "").trim();
+        const normalizedTotalChunks = Number(totalChunks);
+
+        if (!normalizedHash) {
+            return res.status(400).json({
+                ok: false,
+                message: "hash is required",
+            });
+        }
+
+        await fse.ensureDir(CHUNK_UPLOAD_ROOT);
+        await fse.ensureDir(MERGED_UPLOAD_ROOT);
+
+        const mergedFilePath = buildMergedFilePath(normalizedHash, fileName);
+        const mergedExists = await fse.pathExists(mergedFilePath);
+
+        const uploadedChunks = [];
+        const hashDir = path.join(CHUNK_UPLOAD_ROOT, normalizedHash);
+        if (await fse.pathExists(hashDir)) {
+            const chunkFiles = await fse.readdir(hashDir);
+            for (const chunkFile of chunkFiles) {
+                const match = String(chunkFile).match(/^(\d+)\.part$/);
+                if (match) {
+                    uploadedChunks.push(Number(match[1]));
+                }
+            }
+        }
+
+        uploadedChunks.sort((a, b) => a - b);
+
+        const allChunkIndexes = Number.isInteger(normalizedTotalChunks) && normalizedTotalChunks > 0
+            ? Array.from({ length: normalizedTotalChunks }, (_, index) => index)
+            : [];
+
+        const data = {
+            hash: normalizedHash,
+            uploaded: mergedExists,
+            uploadedChunks: mergedExists ? allChunkIndexes : uploadedChunks,
+        };
+
+        return res.json({
+            ok: true,
+            data,
+        });
+    } catch (error) {
+        const message = error?.message || "check chunk upload failed";
+        const statusCode = /required|invalid/i.test(message) ? 400 : 500;
+        return res.status(statusCode).json({
+            ok: false,
+            message,
+        });
+    }
+});
+
+app.post("/upload/chunk", requireAuth, (req, res) => {
+    chunkUploadMiddleware(req, res, async (error) => {
+        if (error) {
+            return res.status(400).json({
+                ok: false,
+                message: error?.message || "chunk upload failed",
+            });
+        }
+
+        try {
+            const { hash, chunkIndex, fileName, totalChunks } = req.body || {};
+            const normalizedHash = String(hash || "").trim();
+            const normalizedChunkIndex = Number(chunkIndex);
+            const normalizedTotalChunks = Number(totalChunks);
+
+            if (!normalizedHash || !Number.isInteger(normalizedChunkIndex) || normalizedChunkIndex < 0) {
+                return res.status(400).json({
+                    ok: false,
+                    message: "invalid hash or chunk index",
+                });
+            }
+
+            if (!req.file?.buffer) {
+                return res.status(400).json({
+                    ok: false,
+                    message: "chunk is required",
+                });
+            }
+
+            await fse.ensureDir(CHUNK_UPLOAD_ROOT);
+            const hashDir = path.join(CHUNK_UPLOAD_ROOT, normalizedHash);
+            await fse.ensureDir(hashDir);
+
+            const chunkPath = path.join(hashDir, `${normalizedChunkIndex}.part`);
+            await fse.writeFile(chunkPath, req.file.buffer);
+
+            const chunkFiles = await fse.readdir(hashDir);
+            const uploadedChunks = chunkFiles
+                .map((name) => {
+                    const match = String(name).match(/^(\d+)\.part$/);
+                    return match ? Number(match[1]) : null;
+                })
+                .filter((value) => Number.isInteger(value))
+                .sort((a, b) => a - b);
+
+            const data = {
+                hash: normalizedHash,
+                fileName: sanitizeUploadFileName(fileName),
+                chunkIndex: normalizedChunkIndex,
+                totalChunks: Number.isInteger(normalizedTotalChunks) && normalizedTotalChunks > 0
+                    ? normalizedTotalChunks
+                    : undefined,
+                uploadedChunks,
+            };
+
+            return res.json({
+                ok: true,
+                data,
+            });
+        } catch (saveError) {
+            return res.status(500).json({
+                ok: false,
+                message: saveError?.message || "save chunk failed",
+            });
+        }
+    });
+});
+
+app.post("/upload/merge", requireAuth, async (req, res) => {
+    try {
+        const { hash, fileName, totalChunks } = req.body || {};
+        const normalizedHash = String(hash || "").trim();
+        const normalizedFileName = String(fileName || "").trim();
+        const normalizedTotalChunks = Number(totalChunks);
+
+        if (!normalizedHash || !normalizedFileName || !Number.isInteger(normalizedTotalChunks) || normalizedTotalChunks <= 0) {
+            return res.status(400).json({
+                ok: false,
+                message: "hash, fileName and totalChunks are required",
+            });
+        }
+
+        const hashDir = path.join(CHUNK_UPLOAD_ROOT, normalizedHash);
+        if (!await fse.pathExists(hashDir)) {
+            return res.status(404).json({
+                ok: false,
+                message: "chunk directory not found",
+            });
+        }
+
+        const missingChunks = [];
+        for (let index = 0; index < normalizedTotalChunks; index += 1) {
+            const chunkPath = path.join(hashDir, `${index}.part`);
+            if (!await fse.pathExists(chunkPath)) {
+                missingChunks.push(index);
+            }
+        }
+
+        if (missingChunks.length > 0) {
+            return res.status(409).json({
+                ok: false,
+                message: "missing chunks",
+                missing_chunks: missingChunks,
+            });
+        }
+
+        await fse.ensureDir(MERGED_UPLOAD_ROOT);
+        const mergedFilePath = buildMergedFilePath(normalizedHash, normalizedFileName);
+        await fse.remove(mergedFilePath);
+
+        const writeStream = fs.createWriteStream(mergedFilePath, { flags: "a" });
+        for (let index = 0; index < normalizedTotalChunks; index += 1) {
+            const chunkPath = path.join(hashDir, `${index}.part`);
+            await appendChunkToStream(writeStream, chunkPath);
+        }
+        await new Promise((resolve, reject) => {
+            writeStream.on("error", reject);
+            writeStream.end(resolve);
+        });
+
+        const mergedBuffer = await fse.readFile(mergedFilePath);
+        const ragResult = await processAndStoreDocument(mergedBuffer, normalizedFileName);
+        await fse.remove(hashDir);
+
+        const data = {
+            ...ragResult,
+            hash: normalizedHash,
+            mergedFilePath,
+        };
+
+        return res.json({
+            ok: true,
+            message: "document indexed",
+            data,
+        });
+    } catch (error) {
+        return res.status(500).json({
+            ok: false,
+            message: error?.message || "merge chunk upload failed",
+        });
+    }
+});
+
 app.post("/upload-image", requireAuth, (req, res) => {
     imageUploadMiddleware(req, res, (error) => {
         if (error) {
@@ -530,6 +940,31 @@ app.post("/chat", requireAuth, async (req, res) => {
     }
 
     if (isKnowledgeIntent(message)) {
+        const shouldUseLargeContext = mentionsActiveLargeFile(message, activeLargeFile);
+
+        if (shouldUseLargeContext) {
+            saveMessage(req.user.id, sessionId, "user", message);
+
+            const contextPayload = buildLargeFileContext(activeLargeFile, message);
+            const longContextPrompt = `你是一个智能助手。请仅根据给定文档片段回答问题，不得编造文档中不存在的信息；若片段不足以支持结论，请明确说明“证据不足，需补充片段”。\n\n文档名：${activeLargeFile.fileName}\n片段总数：${contextPayload.totalSegments}\n本轮命中片段：${contextPayload.selectedCount}\n\n参考片段：\n${contextPayload.contextText}\n\n用户问题：${message}`;
+            console.log(
+                `[chat][large_file] source=${activeLargeFile.fileName} segments=${contextPayload.selectedCount}/${contextPayload.totalSegments} chars=${contextPayload.selectedChars} model=${LONG_CONTEXT_MODEL}`
+            );
+
+            await chatWithStream(req.user.id, sessionId, longContextPrompt, resolvedImage, systemPrompt, temperature, res, {
+                enableWebSearch: false,
+                skipUserMessageSave: true,
+                forceModel: LONG_CONTEXT_MODEL,
+                onComplete: (metrics) => {
+                    if (metrics?.messageId) {
+                        saveMessageMetric(metrics.messageId, metrics);
+                    }
+                    sendSseMetrics(res, metrics);
+                },
+            });
+            return;
+        }
+
         const preferredSource = refersToLatestUpload(message)
             ? getLatestUploadedSource()
             : "";
